@@ -23,6 +23,8 @@ public class ItemBuilder {
     private static final ItemStack ERROR_ITEM;
     private static final Map<String, ItemStack> CACHE = new HashMap<>();
     private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new ConcurrentHashMap<>();
+    private static final Map<String, Component> PARSE_CACHE = new ConcurrentHashMap<>();
+    private static final String NON_ITALIC = "<italic:false>";
 
     static {
         // Default error item
@@ -71,7 +73,6 @@ public class ItemBuilder {
 
         if (config.contains("name")) meta.displayName(parse(config.getString("name")));
 
-        // Safely set CustomModelData
         if (config.contains("model")) {
             try {
                 meta.setCustomModelData(config.getInt("model"));
@@ -103,7 +104,11 @@ public class ItemBuilder {
                 AttributeModifier mod = ZERO_MODIFIERS.computeIfAbsent(key, k ->
                         new AttributeModifier(UUID.nameUUIDFromBytes(k.getBytes()), "zero_" + attribute.name().toLowerCase(), 0.0,
                                 AttributeModifier.Operation.ADD_NUMBER, slot));
-                meta.addAttributeModifier(attribute, mod);
+                try {
+                    meta.addAttributeModifier(attribute, mod);
+                } catch (Exception e) {
+                    log("Failed to apply modifier " + attribute + "@" + slot + ": " + e.getMessage());
+                }
             }
         }
 
@@ -117,7 +122,12 @@ public class ItemBuilder {
         }
 
         if (config.contains("lore")) {
-            meta.lore(config.getStringList("lore").stream().map(ItemBuilder::parse).toList());
+            List<String> loreStrings = config.getStringList("lore");
+            List<Component> lore = new ArrayList<>();
+            for (String line : loreStrings) {
+                lore.add(parse(line));
+            }
+            meta.lore(lore);
         }
 
         item.setItemMeta(meta);
@@ -126,11 +136,11 @@ public class ItemBuilder {
 
     private static Component parse(String legacy) {
         if (legacy == null) return Component.empty();
-        return MM.deserialize(convertLegacyToMiniMessage(legacy));
+        return PARSE_CACHE.computeIfAbsent(legacy, l -> MM.deserialize(convertLegacyToMiniMessage(l)));
     }
 
     private static String convertLegacyToMiniMessage(String input) {
-        StringBuilder sb = new StringBuilder("<italic:false>");
+        StringBuilder sb = new StringBuilder(NON_ITALIC);
         List<String> openTags = new ArrayList<>();
         char[] chars = input.toCharArray();
         for (int i = 0; i < chars.length; i++) {
@@ -141,7 +151,7 @@ public class ItemBuilder {
                     for (int j = openTags.size() - 1; j >= 0; j--) sb.append("</").append(openTags.get(j)).append(">");
                     openTags.clear();
                     String tagName = tag.replace("<", "").replace(">", "");
-                    sb.append(tag).append("<italic:false>");
+                    sb.append(tag).append(NON_ITALIC);
                     openTags.add(tagName);
                     continue;
                 }

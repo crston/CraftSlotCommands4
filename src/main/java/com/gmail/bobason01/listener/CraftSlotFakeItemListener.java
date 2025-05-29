@@ -1,12 +1,14 @@
 package com.gmail.bobason01.listener;
 
-import com.gmail.bobason01.util.ItemBuilder;
 import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
+import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
+import com.gmail.bobason01.util.ItemBuilder;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -17,16 +19,19 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
-import java.util.Arrays;
-import java.util.Objects;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class CraftSlotFakeItemListener implements Listener {
 
-    private final ItemStack[] fakeItems = new ItemStack[5];
     private final Plugin plugin;
     private final Logger logger;
+    private final Map<Integer, ItemStack> menuItems = new HashMap<>();
+    private final Set<Integer> activeMenuSlots = new HashSet<>();
+    private final ItemStack[] baseFakeInventory = new ItemStack[45];
+    private final Map<UUID, Long> lastUpdate = new HashMap<>();
+    private static final long MIN_UPDATE_INTERVAL_MS = 100L;
 
     public CraftSlotFakeItemListener(FileConfiguration config, Plugin plugin) {
         this.plugin = plugin;
@@ -35,142 +40,93 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     public void reload(FileConfiguration config) {
-        ItemBuilder.loadFromConfig(Objects.requireNonNull(config.getConfigurationSection("slot-item")));
+        activeMenuSlots.clear();
+        menuItems.clear();
 
+        // Load item config
+        ConfigurationSection itemSection = config.getConfigurationSection("slot-item");
+        if (itemSection != null) {
+            ItemBuilder.loadFromConfig(itemSection);
+        }
+
+        // Load use-slot
+        ConfigurationSection useSlotSection = config.getConfigurationSection("use-slot");
+        if (useSlotSection != null) {
+            for (String key : useSlotSection.getKeys(false)) {
+                try {
+                    int slot = Integer.parseInt(key);
+                    if (useSlotSection.getBoolean(key)) {
+                        activeMenuSlots.add(slot);
+                        ItemStack item = ItemBuilder.get(key);
+                        menuItems.put(slot, item);
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
+        // Prepare base inventory (only first 5 slots are menus)
+        Arrays.fill(baseFakeInventory, new ItemStack(Material.AIR));
         for (int i = 0; i <= 4; i++) {
-            ItemStack base = ItemBuilder.get(String.valueOf(i));
-            fakeItems[i] = base.clone();
+            if (menuItems.containsKey(i)) {
+                baseFakeInventory[i] = menuItems.get(i).clone();
+            }
         }
     }
 
-    @EventHandler
-    public void onInventoryOpen(InventoryOpenEvent event) {
-        if (!(event.getPlayer() instanceof Player player)) return;
-        if (player.getGameMode() == GameMode.CREATIVE) return;
-        if (event.getInventory().getType() != InventoryType.CRAFTING) return;
-
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (!player.isOnline()) return;
-            sendWindowItems(player);
-            syncCursorItem(player);
-        }, 2L);
+    private boolean shouldUpdate(Player player) {
+        long now = System.currentTimeMillis();
+        UUID uuid = player.getUniqueId();
+        long last = lastUpdate.getOrDefault(uuid, 0L);
+        if (now - last < MIN_UPDATE_INTERVAL_MS) return false;
+        lastUpdate.put(uuid, now);
+        return true;
     }
 
-    @EventHandler
-    public void onInventoryClick(InventoryClickEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
+    private void scheduleUpdate(Player player, long delayTicks) {
         if (player.getGameMode() == GameMode.CREATIVE) return;
-        if (event.getInventory().getType() != InventoryType.CRAFTING) return;
-
-        int slot = event.getRawSlot();
-        boolean blocked = slot >= 0 && slot <= 4 && fakeItems[slot] != null;
-
-        if (blocked) {
-            event.setCancelled(true);
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                player.setItemOnCursor(new ItemStack(Material.AIR));
-                sendWindowItems(player);
-                Bukkit.getScheduler().runTaskLater(plugin, () -> syncCursorItem(player), 1L);
-            });
-        } else {
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                sendWindowItems(player);
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (player.isOnline() && shouldUpdate(player)) {
+                sendMenuView(player);
                 syncCursorItem(player);
-            });
-        }
+            }
+        }, delayTicks);
     }
 
-    @EventHandler
-    public void onInventoryDrag(InventoryDragEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        if (player.getGameMode() == GameMode.CREATIVE) return;
-        if (event.getInventory().getType() != InventoryType.CRAFTING) return;
-
-        boolean cancel = event.getRawSlots().stream().anyMatch(slot -> slot >= 0 && slot <= 4);
-
-        if (cancel) {
-            event.setCancelled(true);
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                player.setItemOnCursor(new ItemStack(Material.AIR));
-                sendWindowItems(player);
-                Bukkit.getScheduler().runTaskLater(plugin, () -> syncCursorItem(player), 1L);
-            });
-        }
-    }
-
-    @EventHandler
-    public void onInventoryClose(InventoryCloseEvent event) {
-        Player player = (Player) event.getPlayer();
-        if (player.getGameMode() == GameMode.CREATIVE) return;
-        if (event.getInventory().getType() != InventoryType.CRAFTING) return;
-
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (!player.isOnline()) return;
-            sendWindowItems(player);
-            syncCursorItem(player);
-        }, 2L);
-    }
-
-    @EventHandler
-    public void onPlayerJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        if (player.getGameMode() == GameMode.CREATIVE) return;
-
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (!player.isOnline()) return;
-            sendWindowItems(player);
-            syncCursorItem(player);
-        }, 3L);
-    }
-
-    @EventHandler
-    public void onPlayerRespawn(PlayerRespawnEvent event) {
-        Player player = event.getPlayer();
-        if (player.getGameMode() == GameMode.CREATIVE) return;
-
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (!player.isOnline()) return;
-            sendWindowItems(player);
-            syncCursorItem(player);
-        }, 3L);
-    }
-
-    private void sendWindowItems(Player player) {
+    private void sendMenuView(Player player) {
         ItemStack[] contents = new ItemStack[45];
-        Arrays.fill(contents, new ItemStack(Material.AIR));
+        System.arraycopy(baseFakeInventory, 0, contents, 0, 5); // Menu slots
 
-        for (int i = 0; i <= 4; i++) {
-            contents[i] = fakeItems[i] != null ? fakeItems[i] : new ItemStack(Material.AIR);
-        }
-
+        // Armor slots
         contents[5] = safe(player.getInventory().getHelmet());
         contents[6] = safe(player.getInventory().getChestplate());
         contents[7] = safe(player.getInventory().getLeggings());
         contents[8] = safe(player.getInventory().getBoots());
 
+        // Main inventory
         ItemStack[] inv = player.getInventory().getContents();
         for (int i = 9; i <= 35; i++) {
             if (i < inv.length) contents[i] = safe(inv[i]);
         }
+
+        // Hotbar
         for (int i = 36; i <= 44; i++) {
             int index = i - 36;
             if (index < inv.length) contents[i] = safe(inv[index]);
         }
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
-        packet.getIntegers().write(0, 0);
+        packet.getIntegers().write(0, 0); // Player inventory window
         packet.getItemListModifier().write(0, Arrays.asList(contents));
 
         try {
             ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet);
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Failed to send window items to player: " + player.getName(), e);
+            logger.log(Level.SEVERE, "Failed to send menu view to player: " + player.getName(), e);
         }
     }
 
     private void syncCursorItem(Player player) {
         ItemStack cursor = player.getItemOnCursor();
-
         player.setItemOnCursor(cursor);
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.SET_SLOT);
@@ -181,11 +137,74 @@ public class CraftSlotFakeItemListener implements Listener {
         try {
             ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet);
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Failed to send cursor item to player: " + player.getName(), e);
+            logger.log(Level.SEVERE, "Failed to sync cursor for player: " + player.getName(), e);
         }
     }
 
     private ItemStack safe(ItemStack item) {
         return item != null ? item : new ItemStack(Material.AIR);
+    }
+
+    @EventHandler
+    public void onRecipeBookClick(PlayerRecipeBookClickEvent event) {
+        event.setCancelled(true);
+    }
+
+    @EventHandler
+    public void onInventoryOpen(InventoryOpenEvent event) {
+        scheduleUpdate((Player) event.getPlayer(), 2L);
+    }
+
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent event) {
+        Player player = (Player) event.getWhoClicked();
+        if (player.getGameMode() == GameMode.CREATIVE) return;
+
+        int slot = event.getRawSlot();
+        if (activeMenuSlots.contains(slot)) {
+            event.setCancelled(true);
+        }
+
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (shouldUpdate(player)) {
+                player.setItemOnCursor(event.getCursor());
+                sendMenuView(player);
+                syncCursorItem(player);
+            }
+        });
+    }
+
+    @EventHandler
+    public void onInventoryDrag(InventoryDragEvent event) {
+        Player player = (Player) event.getWhoClicked();
+        if (player.getGameMode() == GameMode.CREATIVE) return;
+
+        boolean draggingIntoMenu = event.getRawSlots().stream().anyMatch(activeMenuSlots::contains);
+        if (draggingIntoMenu) {
+            event.setCancelled(true);
+        }
+
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (shouldUpdate(player)) {
+                player.setItemOnCursor(event.getOldCursor());
+                sendMenuView(player);
+                syncCursorItem(player);
+            }
+        });
+    }
+
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent event) {
+        scheduleUpdate((Player) event.getPlayer(), 2L);
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        scheduleUpdate(event.getPlayer(), 3L);
+    }
+
+    @EventHandler
+    public void onPlayerRespawn(PlayerRespawnEvent event) {
+        scheduleUpdate(event.getPlayer(), 3L);
     }
 }

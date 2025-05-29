@@ -14,6 +14,6 @@ public class InventoryUtil {
                 && inv.getSize() == 5
                 && inv.getType() == InventoryType.CRAFTING
                 && view.getPlayer() instanceof Player p
-                && inv.getHolder() == p;
+                && p.equals(inv.getHolder());
     }
 }

@@ -15,8 +15,7 @@ import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import javax.annotation.Nonnull;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 import static com.gmail.bobason01.util.InventoryUtil.isSelf2x2Crafting;
 
@@ -26,13 +25,23 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
     private CraftSlotFakeItemListener fakeItemListener;
     private ConfigurationSection craftingSlotSection;
 
+    private final Map<Integer, String> slotCommandCache = new HashMap<>();
+    private final Map<Integer, Boolean> slotUsageMap = new HashMap<>();
+
     public static CraftSlotCommands getInstance() {
         return instance;
     }
 
     @Override
     public void onEnable() {
+        if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
+            getLogger().severe("ProtocolLib not found! Disabling CraftSlotCommands4");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+
         instance = this;
+
         saveDefaultConfig();
         registerCommand();
         registerEvents();
@@ -59,32 +68,59 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
     public void reloadPlugin() {
         reloadConfig();
         craftingSlotSection = getConfig().getConfigurationSection("crafting-slot");
+
+        slotCommandCache.clear();
+        if (craftingSlotSection != null) {
+            for (String key : craftingSlotSection.getKeys(false)) {
+                try {
+                    int slot = Integer.parseInt(key);
+                    String command = craftingSlotSection.getString(key);
+                    if (command != null && !command.isBlank()) {
+                        slotCommandCache.put(slot, command);
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
+        ConfigurationSection useSlotSec = getConfig().getConfigurationSection("use-slot");
+        slotUsageMap.clear();
+        if (useSlotSec != null) {
+            for (String key : useSlotSec.getKeys(false)) {
+                try {
+                    int slot = Integer.parseInt(key);
+                    slotUsageMap.put(slot, useSlotSec.getBoolean(key));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
         if (fakeItemListener != null) {
             fakeItemListener.reload(getConfig());
         }
     }
 
-    @EventHandler
+    @EventHandler(ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
+        int rawSlot = event.getRawSlot();
+        if (rawSlot < 0 || rawSlot > 4) return;
+
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!(event.getInventory() instanceof CraftingInventory)) return;
         if (!isSelf2x2Crafting(player.getOpenInventory())) return;
         if (player.getGameMode() == GameMode.CREATIVE) return;
 
-        int rawSlot = event.getRawSlot();
-        if (rawSlot < 0 || rawSlot > 4) return;
+        if (!slotUsageMap.getOrDefault(rawSlot, false)) return;
 
-        if (craftingSlotSection == null) return;
-        String command = craftingSlotSection.getString(String.valueOf(rawSlot));
-        if (command == null || command.isBlank()) return;
+        String command = slotCommandCache.get(rawSlot);
+        if (command == null) return;
 
         event.setCancelled(true);
 
         Bukkit.getScheduler().runTask(this, () -> {
-            if (command.startsWith("*")) {
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command.substring(1));
+            String resolved = command.replace("%player%", player.getName());
+            if (resolved.startsWith("*")) {
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), resolved.substring(1));
             } else {
-                Bukkit.dispatchCommand(player, command);
+                Bukkit.dispatchCommand(player, resolved);
             }
         });
     }
@@ -102,7 +138,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
                 CraftSlotCommands.getInstance().reloadPlugin();
                 sendPrefixed(sender, Component.text("Reloaded successfully.", NamedTextColor.GREEN));
             } else {
-                sendPrefixed(sender, Component.text("CraftSlotCommands3", NamedTextColor.AQUA));
+                sendPrefixed(sender, Component.text("CraftSlotCommands4", NamedTextColor.AQUA));
             }
 
             return true;
