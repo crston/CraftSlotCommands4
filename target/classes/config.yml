@@ -1,0 +1,85 @@
+#      --[ Craft Slot Commands 4 ]--
+
+# Enter the command to register in the crafting slots
+# 제작 공간에 등록할 명령어를 입력합니다
+
+# --------------------------------------#
+# If you put * in the start of a command
+# it will be executed by the console
+
+# 명령어 앞에 * 를 붙이면 플레이어가 아닌 서버에서 처리합니다
+# Example - "*say Hello World" == CONSOLE - "HELLO WORLD"
+
+# PAPI SUPPORT
+# PAPI 지원
+# --------------------------------------#
+crafting-slot:
+  # Crafting result slot
+  0: "A"
+  # Top left slot
+  1: "B"
+  # Top right slot
+  2: "C"
+  # Bottom left slot
+  3: "D"
+  # Bottom right slot
+  4: "E"
+  
+# Set whether to place custom items in the crafting slots
+# If you want to use it, change it to true
+
+# 제작 공간에 커스텀 아이템을 배치할 것인지 설정합니다
+# 사용하고 싶다면 true 로 바꿔주세요
+
+items-enabled: true
+
+# Setting up items to use in your crafting slots
+# 제작 공간에 사용할 메뉴 아이템을 설정합니다
+
+# --------------------------------------#
+# model - CustomModelData / damage - Durability / hide-flags - Hide Flags / lore - Lore
+# skull-owner-uuid - Player Head Item Type 1 Value
+# skull-texture-value - Player Head Item Type 2 Value
+
+# 0 - Result slot / 제작 결과물 공간
+# 1 - Top + Left / 왼쪽 + 위쪽 공간
+# 2 - Top + Right / 오른쪽 + 위쪽 공간
+# 3 - Bottom + Left / 왼쪽 + 아래쪽 공간
+# 4 - Bottom + Right / 오른쪽 + 아래쪽 공간
+
+slot-item:
+  0:
+    material: DIRT
+    name: "&6A"
+  1:
+    material: SAND
+    name: "&6B"
+  2:
+    material: STONE
+    name: "&6C"
+  3:
+    material: SANDSTONE
+    name: "&6D"
+  4:
+    material: END_STONE
+    name: "&6E"
+
+# Set the slot to use
+# True to enable, false to disable
+# Slots set to false are not used
+
+# 사용할 슬롯을 설정합니다
+# true 로 활성화 false 로 비활성화 입니다
+# false 가 된 슬롯은 사용되지 않습니다
+
+use-slot:
+  # Crafting result slot
+  0: true
+  # Top left slot
+  1: true
+  # Top right slot
+  2: true
+  # Bottom left slot
+  3: true
+  # Bottom right slot
+  4: true

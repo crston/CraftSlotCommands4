@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="CraftSlotCommands4:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/CraftSlotCommands4_jar</output-path>
+    <root id="archive" name="CraftSlotCommands4.jar">
+      <element id="module-output" name="CraftSlotCommands4" />
+    </root>
+  </artifact>
+</component>

@@ -1,0 +1,14 @@
+name: CraftSlotCommands4
+main: com.gmail.bobason01.CraftSlotCommands
+version: 1.0
+api-version: 1.13
+author: crston
+depend: [ProtocolLib]
+commands:
+  craftslotcommands:
+    description: Admin command for CraftSlotCommands.
+    aliases: [csc]
+permissions:
+  csc.admin:
+    description: Access to the CraftSlotCommands command.
+    default: op
