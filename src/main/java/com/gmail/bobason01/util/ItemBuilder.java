@@ -16,18 +16,20 @@ import org.bukkit.inventory.meta.ItemMeta;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 
 public class ItemBuilder {
 
     private static final MiniMessage MM = MiniMessage.miniMessage();
-    private static final ItemStack ERROR_ITEM;
+    private static final Logger LOGGER = Bukkit.getLogger();
+
+    private static final ItemStack ERROR_ITEM_CLONE;
     private static final Map<String, ItemStack> CACHE = new HashMap<>();
     private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new ConcurrentHashMap<>();
     private static final Map<String, Component> PARSE_CACHE = new ConcurrentHashMap<>();
     private static final String NON_ITALIC = "<italic:false>";
 
     static {
-        // Default error item
         ItemStack item = new ItemStack(Material.BARRIER);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
@@ -35,7 +37,7 @@ public class ItemBuilder {
             meta.lore(List.of(Component.text("Check config", NamedTextColor.RED)));
             item.setItemMeta(meta);
         }
-        ERROR_ITEM = item;
+        ERROR_ITEM_CLONE = item.clone();
     }
 
     public static void loadFromConfig(ConfigurationSection root) {
@@ -48,14 +50,14 @@ public class ItemBuilder {
                 CACHE.put(key, buildRaw(section));
             } catch (Exception e) {
                 log("Failed to build item for: " + key + " - " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
-                CACHE.put(key, ERROR_ITEM.clone());
+                CACHE.put(key, ERROR_ITEM_CLONE.clone());
             }
         }
     }
 
     public static ItemStack get(String key) {
         ItemStack original = CACHE.get(key);
-        return original != null ? original.clone() : ERROR_ITEM.clone();
+        return original != null ? original.clone() : ERROR_ITEM_CLONE.clone();
     }
 
     private static ItemStack buildRaw(ConfigurationSection config) {
@@ -69,9 +71,11 @@ public class ItemBuilder {
 
         ItemStack item = new ItemStack(mat);
         ItemMeta meta = item.getItemMeta();
-        if (meta == null) return ERROR_ITEM.clone();
+        if (meta == null) return ERROR_ITEM_CLONE.clone();
 
-        if (config.contains("name")) meta.displayName(parse(config.getString("name")));
+        if (config.contains("name")) {
+            meta.displayName(parse(config.getString("name")));
+        }
 
         if (config.contains("model")) {
             try {
@@ -81,6 +85,7 @@ public class ItemBuilder {
             }
         }
 
+        // Hide attributes unless explicitly allowed
         meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
 
         Object flagsObj = config.get("hide-flags");
@@ -90,7 +95,8 @@ public class ItemBuilder {
             for (Object obj : list) {
                 if (obj instanceof String str) {
                     try {
-                        meta.addItemFlags(ItemFlag.valueOf(str.toUpperCase(Locale.ROOT)));
+                        String flagName = str.trim().toUpperCase(Locale.ROOT);
+                        meta.addItemFlags(ItemFlag.valueOf(flagName));
                     } catch (IllegalArgumentException e) {
                         log("Unknown ItemFlag: " + str);
                     }
@@ -98,16 +104,19 @@ public class ItemBuilder {
             }
         }
 
-        for (Attribute attribute : Attribute.values()) {
-            for (EquipmentSlot slot : EquipmentSlot.values()) {
-                String key = attribute.name() + ":" + slot.name();
-                AttributeModifier mod = ZERO_MODIFIERS.computeIfAbsent(key, k ->
-                        new AttributeModifier(UUID.nameUUIDFromBytes(k.getBytes()), "zero_" + attribute.name().toLowerCase(), 0.0,
-                                AttributeModifier.Operation.ADD_NUMBER, slot));
-                try {
-                    meta.addAttributeModifier(attribute, mod);
-                } catch (Exception e) {
-                    log("Failed to apply modifier " + attribute + "@" + slot + ": " + e.getMessage());
+        boolean stripAttributes = config.getBoolean("strip-attributes", true);
+        if (stripAttributes) {
+            for (Attribute attribute : Attribute.values()) {
+                for (EquipmentSlot slot : EquipmentSlot.values()) {
+                    String key = attribute.name() + ":" + slot.name();
+                    AttributeModifier mod = ZERO_MODIFIERS.computeIfAbsent(key, k ->
+                            new AttributeModifier(UUID.nameUUIDFromBytes(k.getBytes()), "zero_" + attribute.name().toLowerCase(), 0.0,
+                                    AttributeModifier.Operation.ADD_NUMBER, slot));
+                    try {
+                        meta.addAttributeModifier(attribute, mod);
+                    } catch (Exception e) {
+                        log("Failed to apply modifier " + attribute + "@" + slot + ": " + e.getMessage());
+                    }
                 }
             }
         }
@@ -140,25 +149,22 @@ public class ItemBuilder {
     }
 
     private static String convertLegacyToMiniMessage(String input) {
+        if (input == null || input.isEmpty()) return NON_ITALIC;
         StringBuilder sb = new StringBuilder(NON_ITALIC);
-        List<String> openTags = new ArrayList<>();
         char[] chars = input.toCharArray();
+
         for (int i = 0; i < chars.length; i++) {
             if (chars[i] == '&' && i + 1 < chars.length) {
                 char code = Character.toLowerCase(chars[++i]);
                 String tag = LEGACY_MAP.get(code);
                 if (tag != null) {
-                    for (int j = openTags.size() - 1; j >= 0; j--) sb.append("</").append(openTags.get(j)).append(">");
-                    openTags.clear();
-                    String tagName = tag.replace("<", "").replace(">", "");
                     sb.append(tag).append(NON_ITALIC);
-                    openTags.add(tagName);
                     continue;
                 }
             }
             sb.append(chars[i]);
         }
-        for (int j = openTags.size() - 1; j >= 0; j--) sb.append("</").append(openTags.get(j)).append(">");
+
         return sb.toString();
     }
 
@@ -177,6 +183,6 @@ public class ItemBuilder {
     );
 
     private static void log(String msg) {
-        Bukkit.getLogger().warning("[CSC3] " + msg);
+        LOGGER.warning("[CSC4] " + msg);
     }
 }

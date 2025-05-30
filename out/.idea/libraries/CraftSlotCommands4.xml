@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="CraftSlotCommands4">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/artifacts/CraftSlotCommands4_jar/CraftSlotCommands4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

@@ -43,13 +43,11 @@ public class CraftSlotFakeItemListener implements Listener {
         activeMenuSlots.clear();
         menuItems.clear();
 
-        // Load item config
         ConfigurationSection itemSection = config.getConfigurationSection("slot-item");
         if (itemSection != null) {
             ItemBuilder.loadFromConfig(itemSection);
         }
 
-        // Load use-slot
         ConfigurationSection useSlotSection = config.getConfigurationSection("use-slot");
         if (useSlotSection != null) {
             for (String key : useSlotSection.getKeys(false)) {
@@ -64,7 +62,6 @@ public class CraftSlotFakeItemListener implements Listener {
             }
         }
 
-        // Prepare base inventory (only first 5 slots are menus)
         Arrays.fill(baseFakeInventory, new ItemStack(Material.AIR));
         for (int i = 0; i <= 4; i++) {
             if (menuItems.containsKey(i)) {
@@ -86,36 +83,35 @@ public class CraftSlotFakeItemListener implements Listener {
         if (player.getGameMode() == GameMode.CREATIVE) return;
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             if (player.isOnline() && shouldUpdate(player)) {
-                sendMenuView(player);
-                syncCursorItem(player);
+                sendMenuViewIfNeeded(player);
+                syncCursorItemAlways(player);
             }
         }, delayTicks);
     }
 
-    private void sendMenuView(Player player) {
-        ItemStack[] contents = new ItemStack[45];
-        System.arraycopy(baseFakeInventory, 0, contents, 0, 5); // Menu slots
+    private void sendMenuViewIfNeeded(Player player) {
+        if (player.getOpenInventory().getType() != InventoryType.CRAFTING) return;
 
-        // Armor slots
+        ItemStack[] contents = new ItemStack[45];
+        System.arraycopy(baseFakeInventory, 0, contents, 0, 5);
+
         contents[5] = safe(player.getInventory().getHelmet());
         contents[6] = safe(player.getInventory().getChestplate());
         contents[7] = safe(player.getInventory().getLeggings());
         contents[8] = safe(player.getInventory().getBoots());
 
-        // Main inventory
         ItemStack[] inv = player.getInventory().getContents();
         for (int i = 9; i <= 35; i++) {
             if (i < inv.length) contents[i] = safe(inv[i]);
         }
 
-        // Hotbar
         for (int i = 36; i <= 44; i++) {
             int index = i - 36;
             if (index < inv.length) contents[i] = safe(inv[index]);
         }
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
-        packet.getIntegers().write(0, 0); // Player inventory window
+        packet.getIntegers().write(0, 0);
         packet.getItemListModifier().write(0, Arrays.asList(contents));
 
         try {
@@ -125,8 +121,9 @@ public class CraftSlotFakeItemListener implements Listener {
         }
     }
 
-    private void syncCursorItem(Player player) {
+    private void syncCursorItemAlways(Player player) {
         ItemStack cursor = player.getItemOnCursor();
+
         player.setItemOnCursor(cursor);
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.SET_SLOT);
@@ -160,16 +157,14 @@ public class CraftSlotFakeItemListener implements Listener {
         Player player = (Player) event.getWhoClicked();
         if (player.getGameMode() == GameMode.CREATIVE) return;
 
-        int slot = event.getRawSlot();
-        if (activeMenuSlots.contains(slot)) {
+        if (event.getView().getType() == InventoryType.CRAFTING && activeMenuSlots.contains(event.getRawSlot())) {
             event.setCancelled(true);
         }
 
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (shouldUpdate(player)) {
-                player.setItemOnCursor(event.getCursor());
-                sendMenuView(player);
-                syncCursorItem(player);
+                sendMenuViewIfNeeded(player);
+                syncCursorItemAlways(player);
             }
         });
     }
@@ -179,16 +174,15 @@ public class CraftSlotFakeItemListener implements Listener {
         Player player = (Player) event.getWhoClicked();
         if (player.getGameMode() == GameMode.CREATIVE) return;
 
-        boolean draggingIntoMenu = event.getRawSlots().stream().anyMatch(activeMenuSlots::contains);
-        if (draggingIntoMenu) {
+        if (event.getView().getType() == InventoryType.CRAFTING &&
+                event.getRawSlots().stream().anyMatch(activeMenuSlots::contains)) {
             event.setCancelled(true);
         }
 
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (shouldUpdate(player)) {
-                player.setItemOnCursor(event.getOldCursor());
-                sendMenuView(player);
-                syncCursorItem(player);
+                sendMenuViewIfNeeded(player);
+                syncCursorItemAlways(player);
             }
         });
     }

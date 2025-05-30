@@ -8,6 +8,10 @@ commands:
   craftslotcommands:
     description: Admin command for CraftSlotCommands.
     aliases: [csc]
+  crston:
+    description: Are you having trouble?
+    usage: /crston
+    permission: false
 permissions:
   csc.admin:
     description: Access to the CraftSlotCommands command.

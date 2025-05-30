@@ -21,9 +21,11 @@ import static com.gmail.bobason01.util.InventoryUtil.isSelf2x2Crafting;
 
 public class CraftSlotCommands extends JavaPlugin implements Listener {
 
+    private static final int MIN_MENU_SLOT = 0;
+    private static final int MAX_MENU_SLOT = 4;
+
     private static CraftSlotCommands instance;
     private CraftSlotFakeItemListener fakeItemListener;
-    private ConfigurationSection craftingSlotSection;
 
     private final Map<Integer, String> slotCommandCache = new HashMap<>();
     private final Map<Integer, Boolean> slotUsageMap = new HashMap<>();
@@ -35,8 +37,8 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
-            getLogger().severe("ProtocolLib not found! Disabling CraftSlotCommands4");
-            getServer().getPluginManager().disablePlugin(this);
+            getLogger().severe("ProtocolLib not found! Disabling CraftSlotCommands");
+            Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
 
@@ -46,6 +48,13 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         registerCommand();
         registerEvents();
         reloadPlugin();
+        
+        PluginCommand crstCmd = getCommand("crston");
+        if (crstCmd != null) {
+            crstCmd.setExecutor(new CrstOnCommand());
+        } else {
+            getLogger().warning("Command 'crston' not defined in plugin.yml!");
+        }
     }
 
     private void registerCommand() {
@@ -67,28 +76,26 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
     public void reloadPlugin() {
         reloadConfig();
-        craftingSlotSection = getConfig().getConfigurationSection("crafting-slot");
 
         slotCommandCache.clear();
-        if (craftingSlotSection != null) {
-            for (String key : craftingSlotSection.getKeys(false)) {
-                try {
-                    int slot = Integer.parseInt(key);
-                    String command = craftingSlotSection.getString(key);
-                    if (command != null && !command.isBlank()) {
-                        slotCommandCache.put(slot, command);
-                    }
-                } catch (NumberFormatException ignored) {}
-            }
-        }
+        slotUsageMap.clear();
 
         ConfigurationSection useSlotSec = getConfig().getConfigurationSection("use-slot");
-        slotUsageMap.clear();
+        ConfigurationSection craftingSlotSection = getConfig().getConfigurationSection("crafting-slot");
+
         if (useSlotSec != null) {
             for (String key : useSlotSec.getKeys(false)) {
                 try {
                     int slot = Integer.parseInt(key);
-                    slotUsageMap.put(slot, useSlotSec.getBoolean(key));
+                    boolean enabled = useSlotSec.getBoolean(key);
+                    slotUsageMap.put(slot, enabled);
+
+                    if (enabled && craftingSlotSection != null) {
+                        String command = craftingSlotSection.getString(key);
+                        if (command != null && !command.isBlank()) {
+                            slotCommandCache.put(slot, command);
+                        }
+                    }
                 } catch (NumberFormatException ignored) {}
             }
         }
@@ -100,17 +107,17 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
-        int rawSlot = event.getRawSlot();
-        if (rawSlot < 0 || rawSlot > 4) return;
+        int slot = event.getRawSlot();
+        if (slot < MIN_MENU_SLOT || slot > MAX_MENU_SLOT) return;
 
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!(event.getInventory() instanceof CraftingInventory)) return;
         if (!isSelf2x2Crafting(player.getOpenInventory())) return;
         if (player.getGameMode() == GameMode.CREATIVE) return;
 
-        if (!slotUsageMap.getOrDefault(rawSlot, false)) return;
+        if (!slotUsageMap.getOrDefault(slot, false)) return;
 
-        String command = slotCommandCache.get(rawSlot);
+        String command = slotCommandCache.get(slot);
         if (command == null) return;
 
         event.setCancelled(true);
@@ -138,7 +145,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
                 CraftSlotCommands.getInstance().reloadPlugin();
                 sendPrefixed(sender, Component.text("Reloaded successfully.", NamedTextColor.GREEN));
             } else {
-                sendPrefixed(sender, Component.text("CraftSlotCommands4", NamedTextColor.AQUA));
+                sendPrefixed(sender, Component.text("CraftSlotCommands", NamedTextColor.AQUA));
             }
 
             return true;
@@ -155,6 +162,20 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         private void sendPrefixed(CommandSender sender, Component msg) {
             Component prefix = Component.text("[CSC4] ", NamedTextColor.GRAY);
             sender.sendMessage(prefix.append(msg));
+        }
+    }
+
+    public static class CrstOnCommand implements CommandExecutor {
+
+        @Override
+        public boolean onCommand(@Nonnull CommandSender sender, @Nonnull Command command, @Nonnull String label, @Nonnull String[] args) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
+                return true;
+            }
+
+            player.sendMessage(Component.text("Discord - crston", NamedTextColor.LIGHT_PURPLE));
+            return true;
         }
     }
 }
