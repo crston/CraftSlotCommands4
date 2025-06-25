@@ -14,8 +14,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.*;
-import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.player.*;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
@@ -82,7 +81,7 @@ public class CraftSlotFakeItemListener implements Listener {
     private void scheduleUpdate(Player player, long delayTicks) {
         if (player.getGameMode() == GameMode.CREATIVE) return;
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (player.isOnline() && shouldUpdate(player)) {
+            if (player.isOnline() && shouldUpdate(player) && player.getGameMode() != GameMode.CREATIVE) {
                 sendMenuViewIfNeeded(player);
                 syncCursorItemAlways(player);
             }
@@ -90,6 +89,7 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     private void sendMenuViewIfNeeded(Player player) {
+        if (player.getGameMode() == GameMode.CREATIVE) return;
         if (player.getOpenInventory().getType() != InventoryType.CRAFTING) return;
 
         ItemStack[] contents = new ItemStack[45];
@@ -123,7 +123,6 @@ public class CraftSlotFakeItemListener implements Listener {
 
     private void syncCursorItemAlways(Player player) {
         ItemStack cursor = player.getItemOnCursor();
-
         player.setItemOnCursor(cursor);
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.SET_SLOT);
@@ -162,7 +161,7 @@ public class CraftSlotFakeItemListener implements Listener {
         }
 
         Bukkit.getScheduler().runTask(plugin, () -> {
-            if (shouldUpdate(player)) {
+            if (shouldUpdate(player) && player.getGameMode() != GameMode.CREATIVE) {
                 sendMenuViewIfNeeded(player);
                 syncCursorItemAlways(player);
             }
@@ -180,7 +179,7 @@ public class CraftSlotFakeItemListener implements Listener {
         }
 
         Bukkit.getScheduler().runTask(plugin, () -> {
-            if (shouldUpdate(player)) {
+            if (shouldUpdate(player) && player.getGameMode() != GameMode.CREATIVE) {
                 sendMenuViewIfNeeded(player);
                 syncCursorItemAlways(player);
             }
@@ -200,5 +199,42 @@ public class CraftSlotFakeItemListener implements Listener {
     @EventHandler
     public void onPlayerRespawn(PlayerRespawnEvent event) {
         scheduleUpdate(event.getPlayer(), 3L);
+    }
+
+    @EventHandler
+    public void onGameModeChange(PlayerGameModeChangeEvent event) {
+        Player player = event.getPlayer();
+        GameMode oldMode = player.getGameMode();
+        GameMode newMode = event.getNewGameMode();
+
+        if (newMode == GameMode.CREATIVE) {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (!player.isOnline()) return;
+
+                player.closeInventory();
+
+                PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
+                ItemStack[] contents = new ItemStack[45];
+                Arrays.fill(contents, new ItemStack(Material.AIR));
+                packet.getIntegers().write(0, 0);
+                packet.getItemListModifier().write(0, Arrays.asList(contents));
+
+                try {
+                    ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet);
+                } catch (Exception e) {
+                    logger.log(Level.SEVERE, "Failed to wipe fake items on Creative mode: " + player.getName(), e);
+                }
+            });
+            return;
+        }
+
+        if (oldMode == GameMode.CREATIVE && newMode != GameMode.CREATIVE) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                if (player.isOnline() && player.getGameMode() == newMode) {
+                    sendMenuViewIfNeeded(player);
+                    syncCursorItemAlways(player);
+                }
+            }, 2L);
+        }
     }
 }

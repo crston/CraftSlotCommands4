@@ -1,6 +1,7 @@
 package com.gmail.bobason01;
 
 import com.gmail.bobason01.listener.CraftSlotFakeItemListener;
+import me.clip.placeholderapi.PlaceholderAPI;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
@@ -36,25 +37,22 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable() {
-        if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
-            getLogger().severe("ProtocolLib not found! Disabling CraftSlotCommands");
-            Bukkit.getPluginManager().disablePlugin(this);
+        instance = this;
+
+        if (isPluginEnabled("ProtocolLib") || isPluginEnabled("PlaceholderAPI")) {
+            getLogger().severe("Required dependencies missing! Disabling plugin.");
+            getServer().getPluginManager().disablePlugin(this);
             return;
         }
-
-        instance = this;
 
         saveDefaultConfig();
         registerCommand();
         registerEvents();
         reloadPlugin();
-        
-        PluginCommand crstCmd = getCommand("crston");
-        if (crstCmd != null) {
-            crstCmd.setExecutor(new CrstOnCommand());
-        } else {
-            getLogger().warning("Command 'crston' not defined in plugin.yml!");
-        }
+    }
+
+    private boolean isPluginEnabled(String plugin) {
+        return Bukkit.getPluginManager().getPlugin(plugin) == null;
     }
 
     private void registerCommand() {
@@ -63,8 +61,6 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
             CSCCommand command = new CSCCommand();
             cmd.setExecutor(command);
             cmd.setTabCompleter(command);
-        } else {
-            getLogger().warning("Command 'craftslotcommands' not defined in plugin.yml!");
         }
     }
 
@@ -81,23 +77,21 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         slotUsageMap.clear();
 
         ConfigurationSection useSlotSec = getConfig().getConfigurationSection("use-slot");
-        ConfigurationSection craftingSlotSection = getConfig().getConfigurationSection("crafting-slot");
+        ConfigurationSection craftingSlotSec = getConfig().getConfigurationSection("crafting-slot");
 
-        if (useSlotSec != null) {
-            for (String key : useSlotSec.getKeys(false)) {
-                try {
-                    int slot = Integer.parseInt(key);
-                    boolean enabled = useSlotSec.getBoolean(key);
-                    slotUsageMap.put(slot, enabled);
+        if (useSlotSec == null) return;
 
-                    if (enabled && craftingSlotSection != null) {
-                        String command = craftingSlotSection.getString(key);
-                        if (command != null && !command.isBlank()) {
-                            slotCommandCache.put(slot, command);
-                        }
-                    }
-                } catch (NumberFormatException ignored) {}
-            }
+        for (String key : useSlotSec.getKeys(false)) {
+            try {
+                int slot = Integer.parseInt(key);
+                boolean enabled = useSlotSec.getBoolean(key);
+                slotUsageMap.put(slot, enabled);
+
+                if (enabled && craftingSlotSec != null) {
+                    String cmd = craftingSlotSec.getString(key, "").trim();
+                    if (!cmd.isEmpty()) slotCommandCache.put(slot, cmd);
+                }
+            } catch (NumberFormatException ignored) {}
         }
 
         if (fakeItemListener != null) {
@@ -110,20 +104,21 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         int slot = event.getRawSlot();
         if (slot < MIN_MENU_SLOT || slot > MAX_MENU_SLOT) return;
 
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        if (!(event.getInventory() instanceof CraftingInventory)) return;
-        if (!isSelf2x2Crafting(player.getOpenInventory())) return;
-        if (player.getGameMode() == GameMode.CREATIVE) return;
+        Player player = (event.getWhoClicked() instanceof Player p) ? p : null;
+        if (player == null || !(event.getInventory() instanceof CraftingInventory) ||
+                player.getGameMode() == GameMode.CREATIVE || !isSelf2x2Crafting(player.getOpenInventory())) {
+            return;
+        }
 
         if (!slotUsageMap.getOrDefault(slot, false)) return;
 
         String command = slotCommandCache.get(slot);
-        if (command == null) return;
+        if (command == null || command.isBlank()) return;
 
         event.setCancelled(true);
 
         Bukkit.getScheduler().runTask(this, () -> {
-            String resolved = command.replace("%player%", player.getName());
+            String resolved = PlaceholderAPI.setPlaceholders(player, command);
             if (resolved.startsWith("*")) {
                 Bukkit.dispatchCommand(Bukkit.getConsoleSender(), resolved.substring(1));
             } else {
@@ -153,28 +148,22 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
         @Override
         public List<String> onTabComplete(@Nonnull CommandSender sender, @Nonnull Command command, @Nonnull String alias, String[] args) {
-            if (args.length == 1) {
-                return List.of("reload");
-            }
-            return Collections.emptyList();
+            return args.length == 1 ? List.of("reload") : Collections.emptyList();
         }
 
         private void sendPrefixed(CommandSender sender, Component msg) {
-            Component prefix = Component.text("[CSC4] ", NamedTextColor.GRAY);
-            sender.sendMessage(prefix.append(msg));
+            sender.sendMessage(Component.text("[CSC4] ", NamedTextColor.GRAY).append(msg));
         }
     }
 
     public static class CrstOnCommand implements CommandExecutor {
-
         @Override
         public boolean onCommand(@Nonnull CommandSender sender, @Nonnull Command command, @Nonnull String label, @Nonnull String[] args) {
-            if (!(sender instanceof Player player)) {
-                sender.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
-                return true;
+            if (sender instanceof Player player) {
+                player.sendMessage(Component.text("Discord - crston", NamedTextColor.LIGHT_PURPLE));
+            } else {
+                sender.sendMessage("This command can only be used by players.");
             }
-
-            player.sendMessage(Component.text("Discord - crston", NamedTextColor.LIGHT_PURPLE));
             return true;
         }
     }
