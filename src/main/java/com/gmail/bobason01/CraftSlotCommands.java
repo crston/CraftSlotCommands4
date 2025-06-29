@@ -39,7 +39,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
     public void onEnable() {
         instance = this;
 
-        if (isPluginEnabled("ProtocolLib") || isPluginEnabled("PlaceholderAPI")) {
+        if (isPluginMissing("ProtocolLib") || isPluginMissing("PlaceholderAPI")) {
             getLogger().severe("Required dependencies missing! Disabling plugin.");
             getServer().getPluginManager().disablePlugin(this);
             return;
@@ -51,7 +51,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         reloadPlugin();
     }
 
-    private boolean isPluginEnabled(String plugin) {
+    private boolean isPluginMissing(String plugin) {
         return Bukkit.getPluginManager().getPlugin(plugin) == null;
     }
 
@@ -79,19 +79,21 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         ConfigurationSection useSlotSec = getConfig().getConfigurationSection("use-slot");
         ConfigurationSection craftingSlotSec = getConfig().getConfigurationSection("crafting-slot");
 
-        if (useSlotSec == null) return;
+        if (useSlotSec != null) {
+            for (String key : useSlotSec.getKeys(false)) {
+                try {
+                    int slot = Integer.parseInt(key);
+                    boolean enabled = useSlotSec.getBoolean(key);
+                    slotUsageMap.put(slot, enabled);
 
-        for (String key : useSlotSec.getKeys(false)) {
-            try {
-                int slot = Integer.parseInt(key);
-                boolean enabled = useSlotSec.getBoolean(key);
-                slotUsageMap.put(slot, enabled);
-
-                if (enabled && craftingSlotSec != null) {
-                    String cmd = craftingSlotSec.getString(key, "").trim();
-                    if (!cmd.isEmpty()) slotCommandCache.put(slot, cmd);
-                }
-            } catch (NumberFormatException ignored) {}
+                    if (enabled) {
+                        String cmd = craftingSlotSec != null ? craftingSlotSec.getString(key, "") : "";
+                        if (!cmd.isBlank()) {
+                            slotCommandCache.put(slot, cmd);
+                        }
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
         }
 
         if (fakeItemListener != null) {
@@ -101,22 +103,22 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+
+        GameMode gm = player.getGameMode();
+        if (gm != GameMode.SURVIVAL && gm != GameMode.ADVENTURE) return;
+
+        if (!(event.getInventory() instanceof CraftingInventory)) return;
+        if (!isSelf2x2Crafting(player.getOpenInventory())) return;
+
         int slot = event.getRawSlot();
         if (slot < MIN_MENU_SLOT || slot > MAX_MENU_SLOT) return;
-
-        Player player = (event.getWhoClicked() instanceof Player p) ? p : null;
-        if (player == null || !(event.getInventory() instanceof CraftingInventory) ||
-                player.getGameMode() == GameMode.CREATIVE || !isSelf2x2Crafting(player.getOpenInventory())) {
-            return;
-        }
-
         if (!slotUsageMap.getOrDefault(slot, false)) return;
 
         String command = slotCommandCache.get(slot);
         if (command == null || command.isBlank()) return;
 
         event.setCancelled(true);
-
         Bukkit.getScheduler().runTask(this, () -> {
             String resolved = PlaceholderAPI.setPlaceholders(player, command);
             if (resolved.startsWith("*")) {
@@ -139,10 +141,10 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
             if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
                 CraftSlotCommands.getInstance().reloadPlugin();
                 sendPrefixed(sender, Component.text("Reloaded successfully.", NamedTextColor.GREEN));
-            } else {
-                sendPrefixed(sender, Component.text("CraftSlotCommands", NamedTextColor.AQUA));
+                return true;
             }
 
+            sendPrefixed(sender, Component.text("CraftSlotCommands", NamedTextColor.AQUA));
             return true;
         }
 

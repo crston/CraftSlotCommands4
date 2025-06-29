@@ -79,9 +79,14 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     private void scheduleUpdate(Player player, long delayTicks) {
-        if (player.getGameMode() == GameMode.CREATIVE) return;
+        GameMode mode = player.getGameMode();
+        if (mode != GameMode.SURVIVAL && mode != GameMode.ADVENTURE) return;
+
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (player.isOnline() && shouldUpdate(player) && player.getGameMode() != GameMode.CREATIVE) {
+            if (!player.isOnline()) return;
+            GameMode currentMode = player.getGameMode();
+            if (currentMode != GameMode.SURVIVAL && currentMode != GameMode.ADVENTURE) return;
+            if (shouldUpdate(player)) {
                 sendMenuViewIfNeeded(player);
                 syncCursorItemAlways(player);
             }
@@ -89,8 +94,14 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     private void sendMenuViewIfNeeded(Player player) {
-        if (player.getGameMode() == GameMode.CREATIVE) return;
-        if (player.getOpenInventory().getType() != InventoryType.CRAFTING) return;
+        GameMode mode = player.getGameMode();
+        InventoryType invType = player.getOpenInventory().getType();
+
+        if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR
+                || invType == InventoryType.CREATIVE
+                || invType == InventoryType.PLAYER) {
+            return;
+        }
 
         ItemStack[] contents = new ItemStack[45];
         System.arraycopy(baseFakeInventory, 0, contents, 0, 5);
@@ -101,13 +112,13 @@ public class CraftSlotFakeItemListener implements Listener {
         contents[8] = safe(player.getInventory().getBoots());
 
         ItemStack[] inv = player.getInventory().getContents();
+
         for (int i = 9; i <= 35; i++) {
             if (i < inv.length) contents[i] = safe(inv[i]);
         }
 
-        for (int i = 36; i <= 44; i++) {
-            int index = i - 36;
-            if (index < inv.length) contents[i] = safe(inv[index]);
+        for (int i = 0; i <= 8; i++) {
+            contents[36 + i] = i < inv.length ? safe(inv[i]) : new ItemStack(Material.AIR);
         }
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
@@ -122,6 +133,9 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     private void syncCursorItemAlways(Player player) {
+        GameMode mode = player.getGameMode();
+        if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) return;
+
         ItemStack cursor = player.getItemOnCursor();
         player.setItemOnCursor(cursor);
 
@@ -148,57 +162,67 @@ public class CraftSlotFakeItemListener implements Listener {
 
     @EventHandler
     public void onInventoryOpen(InventoryOpenEvent event) {
-        scheduleUpdate((Player) event.getPlayer(), 2L);
+        Player player = (Player) event.getPlayer();
+        if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
+        scheduleUpdate(player, 2L);
+    }
+
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent event) {
+        Player player = (Player) event.getPlayer();
+        if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
+        scheduleUpdate(player, 2L);
     }
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         Player player = (Player) event.getWhoClicked();
-        if (player.getGameMode() == GameMode.CREATIVE) return;
+        if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
 
         if (event.getView().getType() == InventoryType.CRAFTING && activeMenuSlots.contains(event.getRawSlot())) {
             event.setCancelled(true);
         }
 
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            if (shouldUpdate(player) && player.getGameMode() != GameMode.CREATIVE) {
-                sendMenuViewIfNeeded(player);
-                syncCursorItemAlways(player);
-            }
-        });
+        // ⭐ 빠른 클릭 대응 - 무조건 1틱 후 전체 재렌더링
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (!player.isOnline()) return;
+            if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
+            sendMenuViewIfNeeded(player);
+            syncCursorItemAlways(player);
+        }, 1L);
     }
 
     @EventHandler
     public void onInventoryDrag(InventoryDragEvent event) {
         Player player = (Player) event.getWhoClicked();
-        if (player.getGameMode() == GameMode.CREATIVE) return;
+        if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
 
         if (event.getView().getType() == InventoryType.CRAFTING &&
                 event.getRawSlots().stream().anyMatch(activeMenuSlots::contains)) {
             event.setCancelled(true);
         }
 
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            if (shouldUpdate(player) && player.getGameMode() != GameMode.CREATIVE) {
-                sendMenuViewIfNeeded(player);
-                syncCursorItemAlways(player);
-            }
-        });
-    }
-
-    @EventHandler
-    public void onInventoryClose(InventoryCloseEvent event) {
-        scheduleUpdate((Player) event.getPlayer(), 2L);
+        // ⭐ 드래그 후도 1틱 후 강제 렌더링
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (!player.isOnline()) return;
+            if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
+            sendMenuViewIfNeeded(player);
+            syncCursorItemAlways(player);
+        }, 1L);
     }
 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
-        scheduleUpdate(event.getPlayer(), 3L);
+        Player player = event.getPlayer();
+        if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
+        scheduleUpdate(player, 3L);
     }
 
     @EventHandler
     public void onPlayerRespawn(PlayerRespawnEvent event) {
-        scheduleUpdate(event.getPlayer(), 3L);
+        Player player = event.getPlayer();
+        if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
+        scheduleUpdate(player, 3L);
     }
 
     @EventHandler
@@ -207,28 +231,60 @@ public class CraftSlotFakeItemListener implements Listener {
         GameMode oldMode = player.getGameMode();
         GameMode newMode = event.getNewGameMode();
 
-        if (newMode == GameMode.CREATIVE) {
+        if (newMode == GameMode.CREATIVE || newMode == GameMode.SPECTATOR) {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 if (!player.isOnline()) return;
 
-                player.closeInventory();
+                for (Map.Entry<Integer, ItemStack> entry : menuItems.entrySet()) {
+                    int slot = entry.getKey();
+                    ItemStack expected = entry.getValue();
+                    ItemStack current = player.getInventory().getItem(slot);
+                    if (current != null && current.isSimilar(expected)) {
+                        player.getInventory().setItem(slot, new ItemStack(Material.AIR));
+                    }
+                }
+
+                ItemStack[] fullContents = player.getInventory().getContents();
+                ItemStack[] armor = new ItemStack[] {
+                        safe(player.getInventory().getHelmet()),
+                        safe(player.getInventory().getChestplate()),
+                        safe(player.getInventory().getLeggings()),
+                        safe(player.getInventory().getBoots())
+                };
+
+                ItemStack[] contents = new ItemStack[45];
+                for (int i = 0; i <= 4; i++) contents[i] = new ItemStack(Material.AIR);
+
+                contents[5] = armor[0];
+                contents[6] = armor[1];
+                contents[7] = armor[2];
+                contents[8] = armor[3];
+
+                for (int i = 9; i <= 35; i++) {
+                    if (i < fullContents.length) contents[i] = safe(fullContents[i]);
+                }
+
+                for (int i = 0; i <= 8; i++) {
+                    contents[36 + i] = i < fullContents.length ? safe(fullContents[i]) : new ItemStack(Material.AIR);
+                }
 
                 PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
-                ItemStack[] contents = new ItemStack[45];
-                Arrays.fill(contents, new ItemStack(Material.AIR));
                 packet.getIntegers().write(0, 0);
                 packet.getItemListModifier().write(0, Arrays.asList(contents));
 
                 try {
                     ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet);
                 } catch (Exception e) {
-                    logger.log(Level.SEVERE, "Failed to wipe fake items on Creative mode: " + player.getName(), e);
+                    logger.log(Level.SEVERE, "Failed to send cleared inventory to player: " + player.getName(), e);
                 }
+
+                player.closeInventory();
             });
             return;
         }
 
-        if (oldMode == GameMode.CREATIVE && newMode != GameMode.CREATIVE) {
+        if ((oldMode == GameMode.CREATIVE || oldMode == GameMode.SPECTATOR)
+                && (newMode == GameMode.SURVIVAL || newMode == GameMode.ADVENTURE)) {
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 if (player.isOnline() && player.getGameMode() == newMode) {
                     sendMenuViewIfNeeded(player);
