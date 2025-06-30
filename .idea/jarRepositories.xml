@@ -12,9 +12,19 @@
       <option name="url" value="https://oss.sonatype.org/content/groups/public/" />
     </remote-repository>
     <remote-repository>
+      <option name="id" value="opencollab-repo" />
+      <option name="name" value="opencollab-repo" />
+      <option name="url" value="https://repo.opencollab.dev/maven-releases" />
+    </remote-repository>
+    <remote-repository>
       <option name="id" value="dmulloy2-repo" />
       <option name="name" value="dmulloy2-repo" />
       <option name="url" value="https://repo.dmulloy2.net/repository/public/" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="floodgate-repo" />
+      <option name="name" value="floodgate-repo" />
+      <option name="url" value="https://repo.opencollab.dev/maven-snapshots" />
     </remote-repository>
     <remote-repository>
       <option name="id" value="papermc-repo" />
@@ -40,6 +50,11 @@
       <option name="id" value="minecraft-repo" />
       <option name="name" value="minecraft-repo" />
       <option name="url" value="https://libraries.minecraft.net/" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="geyser-api" />
+      <option name="name" value="geyser-api" />
+      <option name="url" value="https://mvnrepository.com/artifact/org.geysermc.api/base-api" />
     </remote-repository>
     <remote-repository>
       <option name="id" value="netty-all" />

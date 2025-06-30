@@ -12,6 +12,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -30,6 +31,8 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
     private final Map<Integer, String> slotCommandCache = new HashMap<>();
     private final Map<Integer, Boolean> slotUsageMap = new HashMap<>();
+    private final Map<UUID, Long> bedrockCloseTimestamps = new HashMap<>();
+    private static final long IGNORE_CLICK_MS = 300L;
 
     public static CraftSlotCommands getInstance() {
         return instance;
@@ -101,6 +104,18 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         }
     }
 
+    private boolean isBedrockPlayer(Player player) {
+        return player.getUniqueId().toString().startsWith("00000000");
+    }
+
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent event) {
+        Player player = (Player) event.getPlayer();
+        if (isBedrockPlayer(player)) {
+            bedrockCloseTimestamps.put(player.getUniqueId(), System.currentTimeMillis());
+        }
+    }
+
     @EventHandler(ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
@@ -114,6 +129,12 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         int slot = event.getRawSlot();
         if (slot < MIN_MENU_SLOT || slot > MAX_MENU_SLOT) return;
         if (!slotUsageMap.getOrDefault(slot, false)) return;
+
+        if (isBedrockPlayer(player)) {
+            long now = System.currentTimeMillis();
+            long closed = bedrockCloseTimestamps.getOrDefault(player.getUniqueId(), 0L);
+            if (now - closed < IGNORE_CLICK_MS) return; // 최근 인벤토리 닫힘 후 클릭 무시
+        }
 
         String command = slotCommandCache.get(slot);
         if (command == null || command.isBlank()) return;
@@ -158,7 +179,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         }
     }
 
-    public static class CrstOnCommand implements CommandExecutor {
+    public static class crstonCommand implements CommandExecutor {
         @Override
         public boolean onCommand(@Nonnull CommandSender sender, @Nonnull Command command, @Nonnull String label, @Nonnull String[] args) {
             if (sender instanceof Player player) {
@@ -170,3 +191,4 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         }
     }
 }
+
