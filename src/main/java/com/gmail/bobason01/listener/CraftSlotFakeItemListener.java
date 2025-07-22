@@ -157,7 +157,10 @@ public class CraftSlotFakeItemListener implements Listener {
 
     @EventHandler
     public void onRecipeBookClick(PlayerRecipeBookClickEvent event) {
-        event.setCancelled(true);
+        InventoryType type = event.getPlayer().getOpenInventory().getTopInventory().getType();
+        if (type == InventoryType.CRAFTING) {
+            event.setCancelled(true);
+        }
     }
 
     @EventHandler

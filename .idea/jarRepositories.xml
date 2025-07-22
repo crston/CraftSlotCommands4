@@ -17,11 +17,6 @@
       <option name="url" value="https://repo.opencollab.dev/maven-releases" />
     </remote-repository>
     <remote-repository>
-      <option name="id" value="dmulloy2-repo" />
-      <option name="name" value="dmulloy2-repo" />
-      <option name="url" value="https://repo.dmulloy2.net/repository/public/" />
-    </remote-repository>
-    <remote-repository>
       <option name="id" value="floodgate-repo" />
       <option name="name" value="floodgate-repo" />
       <option name="url" value="https://repo.opencollab.dev/maven-snapshots" />
@@ -42,6 +37,21 @@
       <option name="url" value="https://repo1.maven.org/maven2" />
     </remote-repository>
     <remote-repository>
+      <option name="id" value="netty-all" />
+      <option name="name" value="netty-all" />
+      <option name="url" value="https://mvnrepository.com/artifact/io.netty/netty-all" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="papermc" />
+      <option name="name" value="papermc" />
+      <option name="url" value="https://repo.papermc.io/repository/maven-public/" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="dmulloy2-repo" />
+      <option name="name" value="dmulloy2-repo" />
+      <option name="url" value="https://repo.dmulloy2.net/repository/public/" />
+    </remote-repository>
+    <remote-repository>
       <option name="id" value="jboss.community" />
       <option name="name" value="JBoss Community repository" />
       <option name="url" value="https://repository.jboss.org/nexus/content/repositories/public/" />
@@ -55,11 +65,6 @@
       <option name="id" value="geyser-api" />
       <option name="name" value="geyser-api" />
       <option name="url" value="https://mvnrepository.com/artifact/org.geysermc.api/base-api" />
-    </remote-repository>
-    <remote-repository>
-      <option name="id" value="netty-all" />
-      <option name="name" value="netty-all" />
-      <option name="url" value="https://mvnrepository.com/artifact/io.netty/netty-all" />
     </remote-repository>
   </component>
 </project>
