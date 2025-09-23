@@ -1,6 +1,6 @@
 name: CraftSlotCommands4
 main: com.gmail.bobason01.CraftSlotCommands
-version: 4.1
+version: 5.0
 api-version: 1.13
 author: crston
 depend: [ProtocolLib]

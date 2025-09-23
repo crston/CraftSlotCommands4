@@ -1,7 +1,6 @@
 package com.gmail.bobason01.util;
 
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -18,10 +17,11 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
-public class ItemBuilder {
+public final class ItemBuilder {
 
     private static final MiniMessage MM = MiniMessage.miniMessage();
     private static final Logger LOGGER = Bukkit.getLogger();
+    private static final String LOGGER_PREFIX = "[EcoSystem | ItemBuilder] ";
 
     private static final ItemStack ERROR_ITEM_CLONE;
     private static final Map<String, ItemStack> CACHE = new HashMap<>();
@@ -32,24 +32,34 @@ public class ItemBuilder {
     static {
         ItemStack item = new ItemStack(Material.BARRIER);
         ItemMeta meta = item.getItemMeta();
-        if (meta != null) {
-            meta.displayName(Component.text("ERROR", NamedTextColor.DARK_RED));
-            meta.lore(List.of(Component.text("Check config", NamedTextColor.RED)));
-            item.setItemMeta(meta);
-        }
-        ERROR_ITEM_CLONE = item.clone();
+        meta.displayName(MM.deserialize("<dark_red>ERROR"));
+        meta.lore(List.of(MM.deserialize("<red>Check plugin configuration.")));
+        item.setItemMeta(meta);
+        ERROR_ITEM_CLONE = item;
     }
 
     public static void loadFromConfig(ConfigurationSection root) {
         CACHE.clear();
+        if (root == null) return;
         for (String key : root.getKeys(false)) {
             ConfigurationSection section = root.getConfigurationSection(key);
             if (section == null) continue;
 
             try {
-                CACHE.put(key, buildRaw(section));
+                ItemModel model = new ItemModel(
+                        section.getString("material"),
+                        section.getString("name"),
+                        section.getStringList("lore"),
+                        section.getInt("model"),
+                        section.getInt("damage"),
+                        section.getBoolean("unbreakable"),
+                        section.getBoolean("strip-attributes"),
+                        section.getBoolean("hide-all-flags"),
+                        section.getStringList("hide-flags")
+                );
+                CACHE.put(key, build(model));
             } catch (Exception e) {
-                log("Failed to build item for: " + key + " - " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+                log("Failed to build item '" + key + "': " + e.getMessage());
                 CACHE.put(key, ERROR_ITEM_CLONE.clone());
             }
         }
@@ -60,92 +70,70 @@ public class ItemBuilder {
         return original != null ? original.clone() : ERROR_ITEM_CLONE.clone();
     }
 
-    private static ItemStack buildRaw(ConfigurationSection config) {
-        String materialName = config.getString("material");
-        if (materialName == null || materialName.isBlank()) {
-            throw new IllegalArgumentException("Missing or blank material name");
+    public static ItemStack build(ItemModel model) {
+        if (model.material() == null || model.material().isBlank()) {
+            throw new IllegalArgumentException("Material field is missing or blank");
         }
 
-        Material mat = Material.matchMaterial(materialName);
-        if (mat == null) throw new IllegalArgumentException("Invalid material: " + materialName);
+        Material mat = Material.matchMaterial(model.material());
+        if (mat == null) throw new IllegalArgumentException("Invalid material: " + model.material());
 
         ItemStack item = new ItemStack(mat);
         ItemMeta meta = item.getItemMeta();
-        if (meta == null) return ERROR_ITEM_CLONE.clone();
+        if (meta == null) return item;
 
-        if (config.contains("name")) {
-            meta.displayName(parse(config.getString("name")));
+        if (model.name() != null) {
+            meta.displayName(parse(model.name()));
+        }
+        if (model.model() != 0) {
+            meta.setCustomModelData(model.model());
+        }
+        if (model.lore() != null && !model.lore().isEmpty()) {
+            meta.lore(model.lore().stream().map(ItemBuilder::parse).toList());
+        }
+        if (model.unbreakable()) {
+            meta.setUnbreakable(true);
+        }
+        if (meta instanceof Damageable dmg && model.damage() > 0) {
+            dmg.setDamage(model.damage());
         }
 
-        if (config.contains("model")) {
-            try {
-                meta.setCustomModelData(config.getInt("model"));
-            } catch (Exception e) {
-                log("CustomModelData not supported on material: " + mat);
-            }
-        }
-
-        // Hide attributes unless explicitly allowed
-        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
-
-        Object flagsObj = config.get("hide-flags");
-        if (flagsObj instanceof Boolean bool && bool) {
-            meta.addItemFlags(ItemFlag.values());
-        } else if (flagsObj instanceof List<?> list) {
-            for (Object obj : list) {
-                if (obj instanceof String str) {
-                    try {
-                        String flagName = str.trim().toUpperCase(Locale.ROOT);
-                        meta.addItemFlags(ItemFlag.valueOf(flagName));
-                    } catch (IllegalArgumentException e) {
-                        log("Unknown ItemFlag: " + str);
-                    }
+        EnumSet<ItemFlag> flags = EnumSet.noneOf(ItemFlag.class);
+        if (model.hideAllFlags()) {
+            flags.addAll(EnumSet.allOf(ItemFlag.class));
+        } else if (model.hideFlags() != null) {
+            for (String flagName : model.hideFlags()) {
+                try {
+                    flags.add(ItemFlag.valueOf(flagName.trim().toUpperCase(Locale.ROOT)));
+                } catch (IllegalArgumentException e) {
+                    log("Unknown ItemFlag: " + flagName);
                 }
             }
         }
+        if (!flags.isEmpty()) {
+            meta.addItemFlags(flags.toArray(new ItemFlag[0]));
+        }
 
-        boolean stripAttributes = config.getBoolean("strip-attributes", true);
-        if (stripAttributes) {
+        if (model.stripAttributes()) {
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
             for (Attribute attribute : Attribute.values()) {
                 for (EquipmentSlot slot : EquipmentSlot.values()) {
                     String key = attribute.name() + ":" + slot.name();
                     AttributeModifier mod = ZERO_MODIFIERS.computeIfAbsent(key, k ->
                             new AttributeModifier(UUID.nameUUIDFromBytes(k.getBytes()), "zero_" + attribute.name().toLowerCase(), 0.0,
                                     AttributeModifier.Operation.ADD_NUMBER, slot));
-                    try {
-                        meta.addAttributeModifier(attribute, mod);
-                    } catch (Exception e) {
-                        log("Failed to apply modifier " + attribute + "@" + slot + ": " + e.getMessage());
-                    }
+                    meta.addAttributeModifier(attribute, mod);
                 }
             }
-        }
-
-        if (config.getBoolean("unbreakable")) {
-            meta.setUnbreakable(true);
-            meta.addItemFlags(ItemFlag.HIDE_UNBREAKABLE);
-        }
-
-        if (meta instanceof Damageable dmg && config.contains("damage")) {
-            dmg.setDamage(config.getInt("damage"));
-        }
-
-        if (config.contains("lore")) {
-            List<String> loreStrings = config.getStringList("lore");
-            List<Component> lore = new ArrayList<>();
-            for (String line : loreStrings) {
-                lore.add(parse(line));
-            }
-            meta.lore(lore);
         }
 
         item.setItemMeta(meta);
         return item;
     }
 
-    private static Component parse(String legacy) {
-        if (legacy == null) return Component.empty();
-        return PARSE_CACHE.computeIfAbsent(legacy, l -> MM.deserialize(convertLegacyToMiniMessage(l)));
+    private static Component parse(String text) {
+        if (text == null || text.isEmpty()) return Component.empty();
+        return PARSE_CACHE.computeIfAbsent(text, t -> MM.deserialize(convertLegacyToMiniMessage(t)));
     }
 
     private static String convertLegacyToMiniMessage(String input) {
@@ -158,13 +146,15 @@ public class ItemBuilder {
                 char code = Character.toLowerCase(chars[++i]);
                 String tag = LEGACY_MAP.get(code);
                 if (tag != null) {
-                    sb.append(tag).append(NON_ITALIC);
+                    sb.append(tag);
+                    if (code <= 'f' || code == 'r') {
+                        sb.append(NON_ITALIC);
+                    }
                     continue;
                 }
             }
             sb.append(chars[i]);
         }
-
         return sb.toString();
     }
 
@@ -177,12 +167,12 @@ public class ItemBuilder {
             Map.entry('a', "<green>"), Map.entry('b', "<aqua>"),
             Map.entry('c', "<red>"), Map.entry('d', "<light_purple>"),
             Map.entry('e', "<yellow>"), Map.entry('f', "<white>"),
-            Map.entry('l', "<bold>"), Map.entry('m', "<strikethrough>"),
-            Map.entry('n', "<underlined>"), Map.entry('o', "<italic>"),
-            Map.entry('r', "<reset>")
+            Map.entry('k', "<obfuscated>"), Map.entry('l', "<bold>"),
+            Map.entry('m', "<strikethrough>"), Map.entry('n', "<underlined>"),
+            Map.entry('o', "<italic>"), Map.entry('r', "<reset>")
     );
 
-    private static void log(String msg) {
-        LOGGER.warning("[CSC4] " + msg);
+    private static void log(String message) {
+        LOGGER.warning(LOGGER_PREFIX + message);
     }
 }
