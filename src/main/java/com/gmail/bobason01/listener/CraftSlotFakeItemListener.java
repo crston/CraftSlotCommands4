@@ -5,6 +5,8 @@ import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
 import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
 import com.gmail.bobason01.util.ItemBuilder;
+import com.gmail.bobason01.util.UpdateTaskPool;
+import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
@@ -29,12 +31,14 @@ public class CraftSlotFakeItemListener implements Listener {
     private final Map<Integer, ItemStack> menuItems = new HashMap<>();
     private final Set<Integer> activeMenuSlots = new HashSet<>();
     private final ItemStack[] baseFakeInventory = new ItemStack[45];
-    private final Map<UUID, Long> lastUpdate = new HashMap<>();
+
+    private final Object2LongOpenHashMap<UUID> lastUpdate = new Object2LongOpenHashMap<>();
     private static final long MIN_UPDATE_INTERVAL_MS = 100L;
 
     public CraftSlotFakeItemListener(FileConfiguration config, Plugin plugin) {
         this.plugin = plugin;
         this.logger = plugin.getLogger();
+        lastUpdate.defaultReturnValue(0L);
         reload(config);
     }
 
@@ -71,10 +75,9 @@ public class CraftSlotFakeItemListener implements Listener {
 
     private boolean shouldUpdate(Player player) {
         long now = System.currentTimeMillis();
-        UUID uuid = player.getUniqueId();
-        long last = lastUpdate.getOrDefault(uuid, 0L);
+        long last = lastUpdate.getLong(player.getUniqueId());
         if (now - last < MIN_UPDATE_INTERVAL_MS) return false;
-        lastUpdate.put(uuid, now);
+        lastUpdate.put(player.getUniqueId(), now);
         return true;
     }
 
@@ -82,7 +85,7 @@ public class CraftSlotFakeItemListener implements Listener {
         GameMode mode = player.getGameMode();
         if (mode != GameMode.SURVIVAL && mode != GameMode.ADVENTURE) return;
 
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+        UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), delayTicks, () -> {
             if (!player.isOnline()) return;
             GameMode currentMode = player.getGameMode();
             if (currentMode != GameMode.SURVIVAL && currentMode != GameMode.ADVENTURE) return;
@@ -90,7 +93,15 @@ public class CraftSlotFakeItemListener implements Listener {
                 sendMenuViewIfNeeded(player);
                 syncCursorItemAlways(player);
             }
-        }, delayTicks);
+        });
+    }
+
+    public void forceClientRefresh(Player player) {
+        if (!player.isOnline()) return;
+        GameMode currentMode = player.getGameMode();
+        if (currentMode != GameMode.SURVIVAL && currentMode != GameMode.ADVENTURE) return;
+        sendMenuViewIfNeeded(player);
+        syncCursorItemAlways(player);
     }
 
     private void sendMenuViewIfNeeded(Player player) {
@@ -185,14 +196,7 @@ public class CraftSlotFakeItemListener implements Listener {
         if (event.getView().getType() == InventoryType.CRAFTING && activeMenuSlots.contains(event.getRawSlot())) {
             event.setCancelled(true);
         }
-
-        // ⭐ 빠른 클릭 대응 - 무조건 1틱 후 전체 재렌더링
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (!player.isOnline()) return;
-            if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
-            sendMenuViewIfNeeded(player);
-            syncCursorItemAlways(player);
-        }, 1L);
+        UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), 1L, () -> forceClientRefresh(player));
     }
 
     @EventHandler
@@ -204,14 +208,7 @@ public class CraftSlotFakeItemListener implements Listener {
                 event.getRawSlots().stream().anyMatch(activeMenuSlots::contains)) {
             event.setCancelled(true);
         }
-
-        // ⭐ 드래그 후도 1틱 후 강제 렌더링
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (!player.isOnline()) return;
-            if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
-            sendMenuViewIfNeeded(player);
-            syncCursorItemAlways(player);
-        }, 1L);
+        UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), 1L, () -> forceClientRefresh(player));
     }
 
     @EventHandler
@@ -288,12 +285,11 @@ public class CraftSlotFakeItemListener implements Listener {
 
         if ((oldMode == GameMode.CREATIVE || oldMode == GameMode.SPECTATOR)
                 && (newMode == GameMode.SURVIVAL || newMode == GameMode.ADVENTURE)) {
-            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), 2L, () -> {
                 if (player.isOnline() && player.getGameMode() == newMode) {
-                    sendMenuViewIfNeeded(player);
-                    syncCursorItemAlways(player);
+                    forceClientRefresh(player);
                 }
-            }, 2L);
+            });
         }
     }
 }

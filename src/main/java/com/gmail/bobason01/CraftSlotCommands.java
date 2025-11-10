@@ -2,10 +2,12 @@ package com.gmail.bobason01;
 
 import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
 import com.gmail.bobason01.listener.CraftSlotFakeItemListener;
+import com.gmail.bobason01.util.BedrockDetector;
+import com.gmail.bobason01.util.UpdateTaskPool;
 import me.clip.placeholderapi.PlaceholderAPI;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import org.bukkit.*;
+import org.bukkit.Bukkit;
 import org.bukkit.command.*;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
@@ -47,7 +49,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         instance = this;
 
         if (isPluginMissing("ProtocolLib") || isPluginMissing("PlaceholderAPI")) {
-            getLogger().severe("Required dependencies missing! Disabling plugin.");
+            getLogger().severe("Required dependencies missing. Disabling plugin.");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -56,6 +58,11 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         registerCommand();
         registerEvents();
         reloadPlugin();
+    }
+
+    @Override
+    public void onDisable() {
+        UpdateTaskPool.shutdown();
     }
 
     private boolean isPluginMissing(String plugin) {
@@ -84,7 +91,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
             slotUsageMap.clear();
             keybindCommandMap.clear();
 
-            commandType = getConfig().getString("cmd-type", "crafting-slot").toLowerCase();
+            commandType = getConfig().getString("cmd-type", "crafting-slot").toLowerCase(Locale.ROOT);
             ConfigurationSection useSlotSec = getConfig().getConfigurationSection("use-slot");
 
             if (useSlotSec != null) {
@@ -132,7 +139,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
                 Map<String, String> binds = new HashMap<>();
                 for (String key : slotSection.getKeys(false)) {
-                    binds.put(key.toUpperCase(), slotSection.getString(key));
+                    binds.put(key.toUpperCase(Locale.ROOT), slotSection.getString(key));
                 }
                 keybindCommandMap.put(slot, binds);
             } catch (NumberFormatException ignored) {}
@@ -140,7 +147,7 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
     }
 
     private boolean isBedrockPlayer(Player player) {
-        return player.getUniqueId().toString().startsWith("00000000");
+        return BedrockDetector.isBedrock(player);
     }
 
     @EventHandler
@@ -154,11 +161,11 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
     @EventHandler(ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
         if (event.getRawSlot() > MAX_MENU_SLOT) return;
-
         if (event.getView().getType() != InventoryType.CRAFTING) return;
-        Player player = (Player) event.getWhoClicked();
 
+        Player player = (Player) event.getWhoClicked();
         if (!slotUsageMap.getOrDefault(event.getRawSlot(), false)) return;
+
         if (isBedrockPlayer(player)) {
             long closed = bedrockCloseTimestamps.getOrDefault(player.getUniqueId(), 0L);
             if (System.currentTimeMillis() - closed < IGNORE_CLICK_MS) return;
@@ -169,6 +176,52 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
 
         event.setCancelled(true);
         Bukkit.getScheduler().runTask(this, () -> dispatchCommand(player, command));
+        postUpdatePlayerView(player);
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onInventoryDrag(InventoryDragEvent event) {
+        if (event.getView().getType() != InventoryType.CRAFTING) return;
+
+        boolean hit = event.getRawSlots().stream().anyMatch(s -> s >= MIN_MENU_SLOT && s <= MAX_MENU_SLOT && slotUsageMap.getOrDefault(s, false));
+        if (!hit) return;
+
+        event.setCancelled(true);
+        Player player = (Player) event.getWhoClicked();
+        postUpdatePlayerView(player);
+    }
+
+    @EventHandler
+    public void onDrop(PlayerDropItemEvent event) {
+        if (!commandType.equals("keybind-commands")) return;
+        Player player = event.getPlayer();
+        if (isValidCraftingContext(player)) return;
+
+        event.setCancelled(true);
+        triggerAllCursorKeybinds(player, "DROP");
+        postUpdatePlayerView(player);
+    }
+
+    @EventHandler
+    public void onSwap(PlayerSwapHandItemsEvent event) {
+        if (!commandType.equals("keybind-commands")) return;
+        Player player = event.getPlayer();
+        if (isValidCraftingContext(player)) return;
+
+        event.setCancelled(true);
+        triggerAllCursorKeybinds(player, "F");
+        postUpdatePlayerView(player);
+    }
+
+    @EventHandler
+    public void onRecipeClick(PlayerRecipeBookClickEvent event) {
+        Player player = event.getPlayer();
+        if (!isSelf2x2Crafting(player.getOpenInventory())) return;
+
+        event.setCancelled(true);
+        player.closeInventory();
+        Bukkit.getScheduler().runTask(this, () -> player.openWorkbench(null, true));
+        postUpdatePlayerView(player);
     }
 
     private String resolveCommand(InventoryClickEvent event, int slot) {
@@ -189,26 +242,6 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         return null;
     }
 
-    @EventHandler
-    public void onDrop(PlayerDropItemEvent event) {
-        if (!commandType.equals("keybind-commands")) return;
-        Player player = event.getPlayer();
-        if (isValidCraftingContext(player)) return;
-
-        event.setCancelled(true);
-        triggerAllCursorKeybinds(player, "DROP");
-    }
-
-    @EventHandler
-    public void onSwap(PlayerSwapHandItemsEvent event) {
-        if (!commandType.equals("keybind-commands")) return;
-        Player player = event.getPlayer();
-        if (isValidCraftingContext(player)) return;
-
-        event.setCancelled(true);
-        triggerAllCursorKeybinds(player, "F");
-    }
-
     private boolean isValidCraftingContext(Player player) {
         return !(player.getOpenInventory().getTopInventory() instanceof CraftingInventory)
                 || !isSelf2x2Crafting(player.getOpenInventory())
@@ -222,21 +255,11 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
             Map<String, String> cmds = keybindCommandMap.get(slot);
             if (cmds == null) continue;
 
-            String command = cmds.get(key.toUpperCase());
+            String command = cmds.get(key.toUpperCase(Locale.ROOT));
             if (command == null || command.isBlank()) continue;
 
             Bukkit.getScheduler().runTask(this, () -> dispatchCommand(player, command));
         }
-    }
-
-    @EventHandler
-    public void onRecipeClick(PlayerRecipeBookClickEvent event) {
-        Player player = event.getPlayer();
-        if (!isSelf2x2Crafting(player.getOpenInventory())) return;
-
-        event.setCancelled(true);
-        player.closeInventory();
-        Bukkit.getScheduler().runTask(this, () -> player.openWorkbench(null, true));
     }
 
     private void dispatchCommand(Player player, String rawCommand) {
@@ -248,21 +271,25 @@ public class CraftSlotCommands extends JavaPlugin implements Listener {
         }
     }
 
-    public static class CSCCommand implements CommandExecutor, TabCompleter {
+    private void postUpdatePlayerView(Player player) {
+        UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), 1L, () -> {
+            if (!player.isOnline()) return;
+            fakeItemListener.forceClientRefresh(player);
+        });
+    }
 
+    public static class CSCCommand implements CommandExecutor, TabCompleter {
         @Override
         public boolean onCommand(@Nonnull CommandSender sender, @Nonnull Command command, @Nonnull String label, @Nonnull String[] args) {
             if (!sender.hasPermission("csc.admin")) {
                 sendPrefixed(sender, Component.text("You do not have permission.", NamedTextColor.RED));
                 return true;
             }
-
             if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
                 CraftSlotCommands.getInstance().reloadPlugin();
                 sendPrefixed(sender, Component.text("Reloaded successfully.", NamedTextColor.GREEN));
                 return true;
             }
-
             sendPrefixed(sender, Component.text("CraftSlotCommands", NamedTextColor.AQUA));
             return true;
         }
