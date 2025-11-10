@@ -24,23 +24,52 @@ public final class ItemBuilder {
     private static final String LOGGER_PREFIX = "[EcoSystem | ItemBuilder] ";
 
     private static final ItemStack ERROR_ITEM_CLONE;
-    private static final Map<String, ItemStack> CACHE = new HashMap<>();
-    private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new ConcurrentHashMap<>();
-    private static final Map<String, Component> PARSE_CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, ItemStack> CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new HashMap<>();
+
+    // LRU 캐시 (최대 512개까지 저장)
+    private static final Map<String, Component> PARSE_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<>(128, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Component> eldest) {
+                    return size() > 512;
+                }
+            });
+
     private static final String NON_ITALIC = "<italic:false>";
+    private static final EnumSet<ItemFlag> ALL_FLAGS = EnumSet.allOf(ItemFlag.class);
 
     static {
+        // 기본 에러 아이템 설정
         ItemStack item = new ItemStack(Material.BARRIER);
         ItemMeta meta = item.getItemMeta();
         meta.displayName(MM.deserialize("<dark_red>ERROR"));
         meta.lore(List.of(MM.deserialize("<red>Check plugin configuration.")));
         item.setItemMeta(meta);
         ERROR_ITEM_CLONE = item;
+
+        // ZERO_MODIFIERS 미리 초기화 (런타임 compute 비용 제거)
+        for (Attribute attribute : Attribute.values()) {
+            for (EquipmentSlot slot : EquipmentSlot.values()) {
+                String key = attribute.name() + ":" + slot.name();
+                ZERO_MODIFIERS.put(key, new AttributeModifier(
+                        UUID.nameUUIDFromBytes(key.getBytes()),
+                        "zero_" + attribute.name().toLowerCase(Locale.ROOT),
+                        0.0,
+                        AttributeModifier.Operation.ADD_NUMBER,
+                        slot
+                ));
+            }
+        }
+    }
+
+    private ItemBuilder() {
     }
 
     public static void loadFromConfig(ConfigurationSection root) {
         CACHE.clear();
         if (root == null) return;
+
         for (String key : root.getKeys(false)) {
             ConfigurationSection section = root.getConfigurationSection(key);
             if (section == null) continue;
@@ -98,20 +127,16 @@ public final class ItemBuilder {
             dmg.setDamage(model.damage());
         }
 
-        EnumSet<ItemFlag> flags = EnumSet.noneOf(ItemFlag.class);
         if (model.hideAllFlags()) {
-            flags.addAll(EnumSet.allOf(ItemFlag.class));
+            meta.addItemFlags(ALL_FLAGS.toArray(new ItemFlag[0]));
         } else if (model.hideFlags() != null) {
             for (String flagName : model.hideFlags()) {
                 try {
-                    flags.add(ItemFlag.valueOf(flagName.trim().toUpperCase(Locale.ROOT)));
+                    meta.addItemFlags(ItemFlag.valueOf(flagName.trim().toUpperCase(Locale.ROOT)));
                 } catch (IllegalArgumentException e) {
                     log("Unknown ItemFlag: " + flagName);
                 }
             }
-        }
-        if (!flags.isEmpty()) {
-            meta.addItemFlags(flags.toArray(new ItemFlag[0]));
         }
 
         if (model.stripAttributes()) {
@@ -119,10 +144,8 @@ public final class ItemBuilder {
             for (Attribute attribute : Attribute.values()) {
                 for (EquipmentSlot slot : EquipmentSlot.values()) {
                     String key = attribute.name() + ":" + slot.name();
-                    AttributeModifier mod = ZERO_MODIFIERS.computeIfAbsent(key, k ->
-                            new AttributeModifier(UUID.nameUUIDFromBytes(k.getBytes()), "zero_" + attribute.name().toLowerCase(), 0.0,
-                                    AttributeModifier.Operation.ADD_NUMBER, slot));
-                    meta.addAttributeModifier(attribute, mod);
+                    AttributeModifier mod = ZERO_MODIFIERS.get(key);
+                    if (mod != null) meta.addAttributeModifier(attribute, mod);
                 }
             }
         }
@@ -138,22 +161,28 @@ public final class ItemBuilder {
 
     private static String convertLegacyToMiniMessage(String input) {
         if (input == null || input.isEmpty()) return NON_ITALIC;
-        StringBuilder sb = new StringBuilder(NON_ITALIC);
-        char[] chars = input.toCharArray();
 
-        for (int i = 0; i < chars.length; i++) {
-            if (chars[i] == '&' && i + 1 < chars.length) {
-                char code = Character.toLowerCase(chars[++i]);
+        StringBuilder sb = new StringBuilder(NON_ITALIC);
+        boolean lastWasColor = false;
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == '&' && i + 1 < input.length()) {
+                char code = Character.toLowerCase(input.charAt(++i));
                 String tag = LEGACY_MAP.get(code);
                 if (tag != null) {
                     sb.append(tag);
                     if (code <= 'f' || code == 'r') {
-                        sb.append(NON_ITALIC);
+                        lastWasColor = true;
                     }
                     continue;
                 }
             }
-            sb.append(chars[i]);
+            if (lastWasColor) {
+                sb.append(NON_ITALIC);
+                lastWasColor = false;
+            }
+            sb.append(c);
         }
         return sb.toString();
     }

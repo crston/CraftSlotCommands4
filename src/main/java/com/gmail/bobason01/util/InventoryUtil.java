@@ -8,19 +8,23 @@ import org.bukkit.inventory.InventoryView;
 
 public final class InventoryUtil {
 
+    private InventoryUtil() {
+    }
+
     public static boolean isSelf2x2Crafting(InventoryView view) {
         Inventory top = view.getTopInventory();
-        if (top.getType() != InventoryType.CRAFTING) {
+
+        // 플레이어의 개인 제작창은 항상 CRAFTING 타입이며 슬롯 5개 (2x2 grid + 결과 1칸)
+        if (top.getType() != InventoryType.CRAFTING || top.getSize() != 5) {
             return false;
         }
 
-        if (top.getSize() != 5) {
-            return false;
-        }
-
-        Object viewer = view.getPlayer();
         InventoryHolder holder = top.getHolder();
+        if (!(view.getPlayer() instanceof Player player)) {
+            return false;
+        }
 
-        return viewer instanceof Player && viewer.equals(holder);
+        // 자신이 연 개인 제작창인지 확인
+        return holder == player;
     }
 }
