@@ -6,8 +6,8 @@ import com.comphenix.protocol.events.PacketContainer;
 import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
 import com.gmail.bobason01.util.ItemBuilder;
 import com.gmail.bobason01.util.UpdateTaskPool;
+import com.gmail.bobason01.util.SchedulerUtil;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
-import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
@@ -15,8 +15,14 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.inventory.*;
-import org.bukkit.event.player.*;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryOpenEvent;
+import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
@@ -139,7 +145,7 @@ public class CraftSlotFakeItemListener implements Listener {
         try {
             ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet);
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Failed to send menu view to player: " + player.getName(), e);
+            logger.log(Level.SEVERE, "Failed to send menu view to player " + player.getName(), e);
         }
     }
 
@@ -158,7 +164,7 @@ public class CraftSlotFakeItemListener implements Listener {
         try {
             ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet);
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Failed to sync cursor for player: " + player.getName(), e);
+            logger.log(Level.SEVERE, "Failed to sync cursor for player " + player.getName(), e);
         }
     }
 
@@ -232,7 +238,7 @@ public class CraftSlotFakeItemListener implements Listener {
         GameMode newMode = event.getNewGameMode();
 
         if (newMode == GameMode.CREATIVE || newMode == GameMode.SPECTATOR) {
-            Bukkit.getScheduler().runTask(plugin, () -> {
+            SchedulerUtil.runForPlayer(plugin, player, () -> {
                 if (!player.isOnline()) return;
 
                 for (Map.Entry<Integer, ItemStack> entry : menuItems.entrySet()) {
@@ -275,7 +281,7 @@ public class CraftSlotFakeItemListener implements Listener {
                 try {
                     ProtocolLibrary.getProtocolManager().sendServerPacket(player, packet);
                 } catch (Exception e) {
-                    logger.log(Level.SEVERE, "Failed to send cleared inventory to player: " + player.getName(), e);
+                    logger.log(Level.SEVERE, "Failed to send cleared inventory to player " + player.getName(), e);
                 }
 
                 player.closeInventory();

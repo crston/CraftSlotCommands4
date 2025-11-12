@@ -4,6 +4,7 @@ import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
 import com.gmail.bobason01.listener.CraftSlotFakeItemListener;
 import com.gmail.bobason01.util.BedrockDetector;
 import com.gmail.bobason01.util.UpdateTaskPool;
+import com.gmail.bobason01.util.SchedulerUtil;
 import me.clip.placeholderapi.PlaceholderAPI;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -87,7 +88,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
     }
 
     public synchronized void reloadPlugin() {
-        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+        SchedulerUtil.runAsync(this, () -> {
             reloadConfig();
 
             slotCommandCache.clear();
@@ -113,8 +114,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
             }
 
             if (fakeItemListener != null) {
-                Bukkit.getScheduler().runTask(this, () ->
-                        fakeItemListener.reload(getConfig()));
+                SchedulerUtil.run(this, () -> fakeItemListener.reload(getConfig()));
             }
         });
     }
@@ -180,7 +180,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
         if (command == null || command.isBlank()) return;
 
         event.setCancelled(true);
-        Bukkit.getScheduler().runTask(this, () -> dispatchCommand(player, command));
+        SchedulerUtil.runForPlayer(this, player, () -> dispatchCommand(player, command));
         postUpdatePlayerView(player);
     }
 
@@ -225,8 +225,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
         if (!isSelf2x2Crafting(player.getOpenInventory())) return;
 
         event.setCancelled(true);
-        player.closeInventory();
-        Bukkit.getScheduler().runTask(this, () -> player.openWorkbench(null, true));
+        SchedulerUtil.runForPlayer(this, player, () -> player.openWorkbench(null, true));
         postUpdatePlayerView(player);
     }
 
@@ -263,14 +262,15 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
             String command = cmds.get(key.toUpperCase(Locale.ROOT));
             if (command == null || command.isBlank()) continue;
 
-            Bukkit.getScheduler().runTask(this, () -> dispatchCommand(player, command));
+            SchedulerUtil.runForPlayer(this, player, () -> dispatchCommand(player, command));
         }
     }
 
     private void dispatchCommand(Player player, String rawCommand) {
         String resolved = PlaceholderAPI.setPlaceholders(player, rawCommand);
         if (resolved.startsWith("*")) {
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), resolved.substring(1));
+            String consoleCmd = resolved.substring(1);
+            SchedulerUtil.run(this, () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), consoleCmd));
         } else {
             Bukkit.dispatchCommand(player, resolved);
         }
@@ -278,7 +278,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
 
     private void postUpdatePlayerView(Player player) {
         UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), 1L, () -> {
-            if (player.isOnline()) {
+            if (player.isOnline() && fakeItemListener != null) {
                 fakeItemListener.forceClientRefresh(player);
             }
         });
