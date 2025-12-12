@@ -5,8 +5,8 @@ import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
 import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
 import com.gmail.bobason01.util.ItemBuilder;
-import com.gmail.bobason01.util.UpdateTaskPool;
 import com.gmail.bobason01.util.SchedulerUtil;
+import com.gmail.bobason01.util.UpdateTaskPool;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
@@ -15,11 +15,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryCloseEvent;
-import org.bukkit.event.inventory.InventoryDragEvent;
-import org.bukkit.event.inventory.InventoryOpenEvent;
-import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
@@ -120,9 +116,14 @@ public class CraftSlotFakeItemListener implements Listener {
             return;
         }
 
+        // 전체 45칸 (제작칸 5 + 갑옷 4 + 인벤토리 27 + 핫바 9)
         ItemStack[] contents = new ItemStack[45];
+
+        // 0~4번(제작 슬롯)은 가짜 아이템으로 채움
         System.arraycopy(baseFakeInventory, 0, contents, 0, 5);
 
+        // 5~8번(갑옷 슬롯) 실제 아이템 반영
+        // *중요*: safe() 내에서 clone()을 하므로 원본 훼손 및 비동기 패킷 오류 방지됨
         contents[5] = safe(player.getInventory().getHelmet());
         contents[6] = safe(player.getInventory().getChestplate());
         contents[7] = safe(player.getInventory().getLeggings());
@@ -130,16 +131,18 @@ public class CraftSlotFakeItemListener implements Listener {
 
         ItemStack[] inv = player.getInventory().getContents();
 
+        // 9~35번(내부 인벤토리)
         for (int i = 9; i <= 35; i++) {
             if (i < inv.length) contents[i] = safe(inv[i]);
         }
 
+        // 36~44번(핫바) -> 패킷상 36번부터 시작
         for (int i = 0; i <= 8; i++) {
             contents[36 + i] = i < inv.length ? safe(inv[i]) : new ItemStack(Material.AIR);
         }
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
-        packet.getIntegers().write(0, 0);
+        packet.getIntegers().write(0, 0); // Window ID 0 (Player Inventory)
         packet.getItemListModifier().write(0, Arrays.asList(contents));
 
         try {
@@ -154,10 +157,11 @@ public class CraftSlotFakeItemListener implements Listener {
         if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) return;
 
         ItemStack cursor = player.getItemOnCursor();
+        // 커서 아이템 재설정 (동기화)
         player.setItemOnCursor(cursor);
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.SET_SLOT);
-        packet.getIntegers().write(0, -1);
+        packet.getIntegers().write(0, -1); // Window ID -1 (Cursor)
         packet.getIntegers().write(1, -1);
         packet.getItemModifier().write(0, cursor);
 
@@ -168,8 +172,13 @@ public class CraftSlotFakeItemListener implements Listener {
         }
     }
 
+    /**
+     * 아이템을 안전하게 반환합니다.
+     * 수정됨: 패킷 전송 시 아이템의 참조(Reference)가 아닌 복제본(Clone)을 사용하여
+     * 겉날개 등의 메타데이터가 손상되거나 시각적 오류가 발생하는 문제를 해결합니다.
+     */
     private ItemStack safe(ItemStack item) {
-        return item != null ? item : new ItemStack(Material.AIR);
+        return item != null ? item.clone() : new ItemStack(Material.AIR);
     }
 
     @EventHandler
@@ -237,10 +246,12 @@ public class CraftSlotFakeItemListener implements Listener {
         GameMode oldMode = player.getGameMode();
         GameMode newMode = event.getNewGameMode();
 
+        // 크리에이티브/관전자로 변경 시 가짜 아이템 제거
         if (newMode == GameMode.CREATIVE || newMode == GameMode.SPECTATOR) {
             SchedulerUtil.runForPlayer(plugin, player, () -> {
                 if (!player.isOnline()) return;
 
+                // 실제 인벤토리에 박혀있을 수 있는 가짜 아이템 청소
                 for (Map.Entry<Integer, ItemStack> entry : menuItems.entrySet()) {
                     int slot = entry.getKey();
                     ItemStack expected = entry.getValue();
@@ -251,6 +262,8 @@ public class CraftSlotFakeItemListener implements Listener {
                 }
 
                 ItemStack[] fullContents = player.getInventory().getContents();
+
+                // 갑옷 복제
                 ItemStack[] armor = new ItemStack[] {
                         safe(player.getInventory().getHelmet()),
                         safe(player.getInventory().getChestplate()),
@@ -259,6 +272,7 @@ public class CraftSlotFakeItemListener implements Listener {
                 };
 
                 ItemStack[] contents = new ItemStack[45];
+                // 제작칸 비우기
                 for (int i = 0; i <= 4; i++) contents[i] = new ItemStack(Material.AIR);
 
                 contents[5] = armor[0];
@@ -289,6 +303,7 @@ public class CraftSlotFakeItemListener implements Listener {
             return;
         }
 
+        // 서바이벌/모험으로 돌아올 때 뷰 갱신
         if ((oldMode == GameMode.CREATIVE || oldMode == GameMode.SPECTATOR)
                 && (newMode == GameMode.SURVIVAL || newMode == GameMode.ADVENTURE)) {
             UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), 2L, () -> {
