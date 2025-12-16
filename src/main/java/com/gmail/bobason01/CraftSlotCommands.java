@@ -50,7 +50,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
     public void onEnable() {
         instance = this;
 
-        if (isPluginMissing("ProtocolLib") || isPluginMissing("PlaceholderAPI")) {
+        if (isPluginMissing("ProtocolLib")) {
             getLogger().severe("Required dependencies missing. Disabling plugin.");
             getServer().getPluginManager().disablePlugin(this);
             return;
