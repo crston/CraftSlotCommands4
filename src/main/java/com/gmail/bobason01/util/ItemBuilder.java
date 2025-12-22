@@ -27,7 +27,6 @@ public final class ItemBuilder {
     private static final Map<String, ItemStack> CACHE = new ConcurrentHashMap<>();
     private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new HashMap<>();
 
-    // LRU 캐시 (최대 512개까지 저장)
     private static final Map<String, Component> PARSE_CACHE =
             Collections.synchronizedMap(new LinkedHashMap<>(128, 0.75f, true) {
                 @Override
@@ -40,7 +39,6 @@ public final class ItemBuilder {
     private static final EnumSet<ItemFlag> ALL_FLAGS = EnumSet.allOf(ItemFlag.class);
 
     static {
-        // 기본 에러 아이템 설정
         ItemStack item = new ItemStack(Material.BARRIER);
         ItemMeta meta = item.getItemMeta();
         meta.displayName(MM.deserialize("<dark_red>ERROR"));
@@ -48,7 +46,6 @@ public final class ItemBuilder {
         item.setItemMeta(meta);
         ERROR_ITEM_CLONE = item;
 
-        // ZERO_MODIFIERS 미리 초기화 (런타임 compute 비용 제거)
         for (Attribute attribute : Attribute.values()) {
             for (EquipmentSlot slot : EquipmentSlot.values()) {
                 String key = attribute.name() + ":" + slot.name();

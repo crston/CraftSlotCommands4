@@ -9,18 +9,12 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * UpdateTaskPool:
- * - Folia/Paper 겸용 업데이트 풀.
- * - 플레이어별 1개 예약만 유지, 요청 병합(Coalescing) 방식.
- * - Folia에서는 player.getScheduler() 기반 지역 실행.
- */
 public final class UpdateTaskPool {
 
     private static final class Entry {
         long runAtTick;
         Runnable action;
-        BukkitTask task; // Paper 환경 전용 (Folia에서는 사용하지 않음)
+        BukkitTask task;
     }
 
     private static final Map<UUID, Entry> TASKS = new ConcurrentHashMap<>();

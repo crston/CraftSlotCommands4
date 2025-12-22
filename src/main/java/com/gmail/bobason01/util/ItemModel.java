@@ -16,15 +16,11 @@ public record ItemModel(
         List<String> hideFlags
 ) {
     public ItemModel {
-        // null 방지 처리 (불변 레코드 특성상 생성자 내부에서 초기화)
         lore = lore == null ? Collections.emptyList() : List.copyOf(lore);
         hideFlags = hideFlags == null ? Collections.emptyList() : List.copyOf(hideFlags);
         material = Objects.requireNonNullElse(material, "BARRIER");
     }
 
-    /**
-     * 간단한 디버깅용 문자열 표현
-     */
     @Override
     public String toString() {
         return "ItemModel[" +

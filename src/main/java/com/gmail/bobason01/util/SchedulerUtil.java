@@ -4,13 +4,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-/**
- * SchedulerUtil:
- * Folia / Paper / Spigot 전부 자동 감지 및 호환되는 스케줄러 유틸.
- *
- * 런타임에 Folia 환경을 감지하여 region-safe 스케줄러를 자동 사용.
- * 모든 run, runLater, runForPlayer 호출은 안전하게 실행됨.
- */
 public final class SchedulerUtil {
 
     private static boolean folia = false;
@@ -52,7 +45,6 @@ public final class SchedulerUtil {
     }
 
     public static void runAsync(Plugin plugin, Runnable task) {
-        // Folia와 Paper 모두 공용 async pool 사용 가능
         Bukkit.getAsyncScheduler().runNow(plugin, scheduledTask -> task.run());
     }
 

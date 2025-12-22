@@ -15,9 +15,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.*;
-import org.bukkit.event.player.PlayerDropItemEvent;
-import org.bukkit.event.player.PlayerSwapHandItemsEvent;
-import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import javax.annotation.Nonnull;
@@ -144,7 +141,14 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
 
                 Map<String, String> binds = new ConcurrentHashMap<>();
                 for (String key : slotSection.getKeys(false)) {
-                    binds.put(key.toUpperCase(Locale.ROOT), slotSection.getString(key, ""));
+                    // 값을 문자열로 가져옵니다.
+                    String cmd = slotSection.getString(key);
+
+                    // 핵심 로직: 문자열이 null이 아니고 비어있지 않은 경우에만 맵에 등록합니다.
+                    // config에서 ""로 설정된 항목은 여기서 걸러져서 아예 등록되지 않으므로 작동하지 않게 됩니다.
+                    if (cmd != null && !cmd.isBlank()) {
+                        binds.put(key.toUpperCase(Locale.ROOT), cmd);
+                    }
                 }
                 keybindCommandMap.put(slot, binds);
             } catch (NumberFormatException ignored) {}
@@ -165,22 +169,26 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
-        if (event.getRawSlot() > MAX_MENU_SLOT) return;
         if (event.getView().getType() != InventoryType.CRAFTING) return;
 
+        int rawSlot = event.getRawSlot();
+        if (rawSlot < MIN_MENU_SLOT || rawSlot > MAX_MENU_SLOT) return;
+
+        if (!slotUsageMap.getOrDefault(rawSlot, false)) return;
+
         Player player = (Player) event.getWhoClicked();
-        if (!slotUsageMap.getOrDefault(event.getRawSlot(), false)) return;
 
         if (isBedrockPlayer(player)) {
             long closed = bedrockCloseTimestamps.getOrDefault(player.getUniqueId(), 0L);
             if (System.currentTimeMillis() - closed < IGNORE_CLICK_MS) return;
         }
 
-        String command = resolveCommand(event, event.getRawSlot());
+        String command = resolveCommand(event, rawSlot);
         if (command == null || command.isBlank()) return;
 
         event.setCancelled(true);
         SchedulerUtil.runForPlayer(this, player, () -> dispatchCommand(player, command));
+
         postUpdatePlayerView(player);
     }
 
@@ -198,28 +206,6 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
     }
 
     @EventHandler
-    public void onDrop(PlayerDropItemEvent event) {
-        if (!"keybind-commands".equals(commandType)) return;
-        Player player = event.getPlayer();
-        if (isInvalidCraftingContext(player)) return;
-
-        event.setCancelled(true);
-        triggerAllCursorKeybinds(player, "DROP");
-        postUpdatePlayerView(player);
-    }
-
-    @EventHandler
-    public void onSwap(PlayerSwapHandItemsEvent event) {
-        if (!"keybind-commands".equals(commandType)) return;
-        Player player = event.getPlayer();
-        if (isInvalidCraftingContext(player)) return;
-
-        event.setCancelled(true);
-        triggerAllCursorKeybinds(player, "F");
-        postUpdatePlayerView(player);
-    }
-
-    @EventHandler
     public void onRecipeClick(PlayerRecipeBookClickEvent event) {
         Player player = event.getPlayer();
         if (!isSelf2x2Crafting(player.getOpenInventory())) return;
@@ -230,40 +216,39 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
     }
 
     private String resolveCommand(InventoryClickEvent event, int slot) {
-        if ("crafting-slot".equals(commandType)) return slotCommandCache.get(slot);
-        if (!"keybind-commands".equals(commandType)) return null;
-
-        Map<String, String> slotCommands = keybindCommandMap.get(slot);
-        if (slotCommands == null) return null;
-
-        String clickType = event.getClick().name();
-        String command = slotCommands.get(clickType);
-        if (command == null && event.getClick().isKeyboardClick()) {
-            int hotbar = event.getHotbarButton();
-            command = slotCommands.get(hotbar >= 0 && hotbar <= 8 ? String.valueOf(hotbar + 1) : "Q");
+        if ("crafting-slot".equals(commandType)) {
+            return slotCommandCache.get(slot);
         }
-        return command;
-    }
 
-    private boolean isInvalidCraftingContext(Player player) {
-        return player.getOpenInventory().getTopInventory() instanceof CraftingInventory
-                && isSelf2x2Crafting(player.getOpenInventory())
-                && player.getItemOnCursor() != null
-                && !player.getItemOnCursor().getType().isAir();
-    }
+        if ("keybind-commands".equals(commandType)) {
+            Map<String, String> slotCommands = keybindCommandMap.get(slot);
+            if (slotCommands == null) return null;
 
-    private void triggerAllCursorKeybinds(Player player, String key) {
-        for (int slot = MIN_MENU_SLOT; slot <= MAX_MENU_SLOT; slot++) {
-            if (!slotUsageMap.getOrDefault(slot, false)) continue;
+            ClickType click = event.getClick();
+            String mappingKey = null;
 
-            Map<String, String> cmds = keybindCommandMap.get(slot);
-            if (cmds == null) continue;
+            if (click == ClickType.LEFT) mappingKey = "LEFT";
+            else if (click == ClickType.RIGHT) mappingKey = "RIGHT";
+            else if (click == ClickType.DROP || click == ClickType.CONTROL_DROP) mappingKey = "Q"; // Q키 매핑
+            else if (click == ClickType.SWAP_OFFHAND) mappingKey = "F"; // F키 매핑
+            else if (click == ClickType.NUMBER_KEY) {
+                int num = event.getHotbarButton() + 1;
+                mappingKey = String.valueOf(num);
+            }
 
-            String command = cmds.get(key.toUpperCase(Locale.ROOT));
-            if (command == null || command.isBlank()) continue;
+            if (mappingKey != null) {
+                // 1차적으로 매핑된 키(예: "Q")를 찾습니다.
+                String cmd = slotCommands.get(mappingKey);
 
-            SchedulerUtil.runForPlayer(this, player, () -> dispatchCommand(player, command));
+                // 만약 Q키 입력인데 "Q" 설정이 없고 "DROP" 설정이 있다면 대체해서 찾습니다.
+                if (cmd == null && "Q".equals(mappingKey)) {
+                    cmd = slotCommands.get("DROP");
+                }
+
+                return cmd;
+            }
         }
+        return null;
     }
 
     private void dispatchCommand(Player player, String rawCommand) {

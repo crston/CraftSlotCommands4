@@ -88,6 +88,16 @@ use-slot:
   # Bottom right slot
   4: true
 
+# --------------------------------------#
+# [Keybinding Settings]
+# Setting a command to "" (blank) will disable the key (equivalent to False).
+# --------------------------------------#
+
+# --------------------------------------#
+# [키바인딩 설정]
+# 명령어를 "" (빈 칸)으로 설정하면 해당 키는 작동하지 않습니다. (False와 동일)
+# --------------------------------------#
+
 keybind-commands:
   0:
     1: "/say Pressed 1 on slot 0"
