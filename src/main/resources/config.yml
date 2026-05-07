@@ -42,6 +42,7 @@ items-enabled: true
 
 # --------------------------------------#
 # model - CustomModelData / damage - Durability / hide-flags - Hide Flags / lore - Lore
+# item-model - Item Model (1.21.4+)
 # skull-owner-uuid - Player Head Item Type 1 Value
 # skull-texture-value - Player Head Item Type 2 Value
 

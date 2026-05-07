@@ -6,10 +6,10 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.InventoryView;
 
+// 인벤토리를 확인하는 유틸리티입니다
 public final class InventoryUtil {
 
-    private InventoryUtil() {
-    }
+    private InventoryUtil() {}
 
     public static boolean isSelf2x2Crafting(InventoryView view) {
         Inventory top = view.getTopInventory();

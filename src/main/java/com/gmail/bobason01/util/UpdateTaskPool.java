@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+// 잦은 이벤트 발생 시 중복 작업을 병합하여 서버 부하를 줄이는 풀 시스템입니다
 public final class UpdateTaskPool {
 
     private static final class Entry {
@@ -36,7 +37,7 @@ public final class UpdateTaskPool {
                 Entry e = new Entry();
                 e.runAtTick = desiredTick;
                 e.action = action;
-                scheduleInternal(id, action, delayTicks);
+                scheduleInternal(id, delayTicks);
                 return e;
             }
 
@@ -44,7 +45,7 @@ public final class UpdateTaskPool {
                 cancelSafely(prev);
                 prev.runAtTick = desiredTick;
                 prev.action = action;
-                scheduleInternal(id, action, delayTicks);
+                scheduleInternal(id, delayTicks);
                 return prev;
             }
 
@@ -53,7 +54,7 @@ public final class UpdateTaskPool {
         });
     }
 
-    private static void scheduleInternal(UUID id, Runnable action, long delayTicks) {
+    private static void scheduleInternal(UUID id, long delayTicks) {
         if (SchedulerUtil.isFolia()) {
             Player player = Bukkit.getPlayer(id);
             if (player == null || !player.isOnline()) return;
@@ -72,7 +73,7 @@ public final class UpdateTaskPool {
         try {
             e.action.run();
         } catch (Throwable t) {
-            Bukkit.getLogger().warning("[UpdateTaskPool] Task error: " + t.getMessage());
+            Bukkit.getLogger().warning("Task error " + t.getMessage());
         }
     }
 

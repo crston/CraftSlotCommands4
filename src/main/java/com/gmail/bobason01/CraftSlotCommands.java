@@ -1,20 +1,31 @@
 package com.gmail.bobason01;
 
 import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
+import com.gmail.bobason01.api.CraftSlotAPI;
+import com.gmail.bobason01.api.CraftSlotAPIProvider;
 import com.gmail.bobason01.listener.CraftSlotFakeItemListener;
 import com.gmail.bobason01.util.BedrockDetector;
 import com.gmail.bobason01.util.UpdateTaskPool;
 import com.gmail.bobason01.util.SchedulerUtil;
+import it.unimi.dsi.fastutil.ints.Int2BooleanMap;
+import it.unimi.dsi.fastutil.ints.Int2BooleanMaps;
+import it.unimi.dsi.fastutil.ints.Int2BooleanOpenHashMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import me.clip.placeholderapi.PlaceholderAPI;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
 import org.bukkit.command.*;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.*;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import javax.annotation.Nonnull;
@@ -23,7 +34,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static com.gmail.bobason01.util.InventoryUtil.isSelf2x2Crafting;
 
-public final class CraftSlotCommands extends JavaPlugin implements Listener {
+// 플러그인 메인 클래스이자 제공된 API의 실제 구현체입니다
+public final class CraftSlotCommands extends JavaPlugin implements Listener, CraftSlotAPI {
 
     private static final int MIN_MENU_SLOT = 0;
     private static final int MAX_MENU_SLOT = 4;
@@ -32,12 +44,13 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
     private static CraftSlotCommands instance;
     private CraftSlotFakeItemListener fakeItemListener;
 
-    private final Map<Integer, String> slotCommandCache = new ConcurrentHashMap<>(5);
-    private final Map<Integer, Boolean> slotUsageMap = new ConcurrentHashMap<>(5);
-    private final Map<UUID, Long> bedrockCloseTimestamps = new ConcurrentHashMap<>();
-    private final Map<Integer, Map<String, String>> keybindCommandMap = new ConcurrentHashMap<>(5);
+    private volatile Int2ObjectMap<String> slotCommandCache = Int2ObjectMaps.emptyMap();
+    private volatile Int2BooleanMap slotUsageMap = Int2BooleanMaps.EMPTY_MAP;
+    private volatile Int2ObjectMap<Map<String, String>> keybindCommandMap = Int2ObjectMaps.emptyMap();
 
-    private String commandType = "crafting-slot";
+    private final Map<UUID, Long> bedrockCloseTimestamps = new ConcurrentHashMap<>();
+
+    private volatile String commandType = "crafting-slot";
 
     public static CraftSlotCommands getInstance() {
         return instance;
@@ -46,9 +59,10 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         instance = this;
+        CraftSlotAPIProvider.register(this);
 
         if (isPluginMissing("ProtocolLib")) {
-            getLogger().severe("Required dependencies missing. Disabling plugin.");
+            getLogger().severe("Required dependencies missing");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -88,71 +102,63 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
         SchedulerUtil.runAsync(this, () -> {
             reloadConfig();
 
-            slotCommandCache.clear();
-            slotUsageMap.clear();
-            keybindCommandMap.clear();
+            Int2ObjectOpenHashMap<String> newSlotCommandCache = new Int2ObjectOpenHashMap<>();
+            Int2BooleanOpenHashMap newSlotUsageMap = new Int2BooleanOpenHashMap();
+            Int2ObjectOpenHashMap<Map<String, String>> newKeybindCommandMap = new Int2ObjectOpenHashMap<>();
 
-            commandType = getConfig().getString("cmd-type", "crafting-slot")
-                    .toLowerCase(Locale.ROOT);
+            String newCommandType = getConfig().getString("cmd-type", "crafting-slot").toLowerCase(Locale.ROOT);
 
             ConfigurationSection useSlotSec = getConfig().getConfigurationSection("use-slot");
             if (useSlotSec != null) {
                 for (String key : useSlotSec.getKeys(false)) {
                     try {
-                        slotUsageMap.put(Integer.parseInt(key), useSlotSec.getBoolean(key));
+                        newSlotUsageMap.put(Integer.parseInt(key), useSlotSec.getBoolean(key));
                     } catch (NumberFormatException ignored) {}
                 }
             }
 
-            if ("crafting-slot".equals(commandType)) {
-                loadCraftingSlotCommands();
-            } else if ("keybind-commands".equals(commandType)) {
-                loadKeybindCommands();
+            if ("crafting-slot".equals(newCommandType)) {
+                ConfigurationSection sec = getConfig().getConfigurationSection("crafting-slot");
+                if (sec != null) {
+                    for (String key : sec.getKeys(false)) {
+                        try {
+                            int slot = Integer.parseInt(key);
+                            String cmd = sec.getString(key, "").trim();
+                            if (!cmd.isEmpty()) newSlotCommandCache.put(slot, cmd);
+                        } catch (NumberFormatException ignored) {}
+                    }
+                }
+            } else if ("keybind-commands".equals(newCommandType)) {
+                ConfigurationSection sec = getConfig().getConfigurationSection("keybind-commands");
+                if (sec != null) {
+                    for (String slotKey : sec.getKeys(false)) {
+                        try {
+                            int slot = Integer.parseInt(slotKey);
+                            ConfigurationSection slotSection = sec.getConfigurationSection(slotKey);
+                            if (slotSection == null) continue;
+
+                            Map<String, String> binds = new HashMap<>();
+                            for (String key : slotSection.getKeys(false)) {
+                                String cmd = slotSection.getString(key);
+                                if (cmd != null && !cmd.isBlank()) {
+                                    binds.put(key.toUpperCase(Locale.ROOT), cmd);
+                                }
+                            }
+                            newKeybindCommandMap.put(slot, binds);
+                        } catch (NumberFormatException ignored) {}
+                    }
+                }
             }
+
+            this.commandType = newCommandType;
+            this.slotUsageMap = newSlotUsageMap;
+            this.slotCommandCache = newSlotCommandCache;
+            this.keybindCommandMap = newKeybindCommandMap;
 
             if (fakeItemListener != null) {
                 SchedulerUtil.run(this, () -> fakeItemListener.reload(getConfig()));
             }
         });
-    }
-
-    private void loadCraftingSlotCommands() {
-        ConfigurationSection section = getConfig().getConfigurationSection("crafting-slot");
-        if (section == null) return;
-
-        for (String key : section.getKeys(false)) {
-            try {
-                int slot = Integer.parseInt(key);
-                String cmd = section.getString(key, "").trim();
-                if (!cmd.isEmpty()) slotCommandCache.put(slot, cmd);
-            } catch (NumberFormatException ignored) {}
-        }
-    }
-
-    private void loadKeybindCommands() {
-        ConfigurationSection section = getConfig().getConfigurationSection("keybind-commands");
-        if (section == null) return;
-
-        for (String slotKey : section.getKeys(false)) {
-            try {
-                int slot = Integer.parseInt(slotKey);
-                ConfigurationSection slotSection = section.getConfigurationSection(slotKey);
-                if (slotSection == null) continue;
-
-                Map<String, String> binds = new ConcurrentHashMap<>();
-                for (String key : slotSection.getKeys(false)) {
-                    // 값을 문자열로 가져옵니다.
-                    String cmd = slotSection.getString(key);
-
-                    // 핵심 로직: 문자열이 null이 아니고 비어있지 않은 경우에만 맵에 등록합니다.
-                    // config에서 ""로 설정된 항목은 여기서 걸러져서 아예 등록되지 않으므로 작동하지 않게 됩니다.
-                    if (cmd != null && !cmd.isBlank()) {
-                        binds.put(key.toUpperCase(Locale.ROOT), cmd);
-                    }
-                }
-                keybindCommandMap.put(slot, binds);
-            } catch (NumberFormatException ignored) {}
-        }
     }
 
     private boolean isBedrockPlayer(Player player) {
@@ -196,8 +202,13 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
     public void onInventoryDrag(InventoryDragEvent event) {
         if (event.getView().getType() != InventoryType.CRAFTING) return;
 
-        boolean hit = event.getRawSlots().stream()
-                .anyMatch(s -> s >= MIN_MENU_SLOT && s <= MAX_MENU_SLOT && slotUsageMap.getOrDefault(s, false));
+        boolean hit = false;
+        for (int s : event.getRawSlots()) {
+            if (s >= MIN_MENU_SLOT && s <= MAX_MENU_SLOT && slotUsageMap.getOrDefault(s, false)) {
+                hit = true;
+                break;
+            }
+        }
 
         if (!hit) return;
 
@@ -229,22 +240,18 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
 
             if (click == ClickType.LEFT) mappingKey = "LEFT";
             else if (click == ClickType.RIGHT) mappingKey = "RIGHT";
-            else if (click == ClickType.DROP || click == ClickType.CONTROL_DROP) mappingKey = "Q"; // Q키 매핑
-            else if (click == ClickType.SWAP_OFFHAND) mappingKey = "F"; // F키 매핑
+            else if (click == ClickType.DROP || click == ClickType.CONTROL_DROP) mappingKey = "Q";
+            else if (click == ClickType.SWAP_OFFHAND) mappingKey = "F";
             else if (click == ClickType.NUMBER_KEY) {
                 int num = event.getHotbarButton() + 1;
                 mappingKey = String.valueOf(num);
             }
 
             if (mappingKey != null) {
-                // 1차적으로 매핑된 키(예: "Q")를 찾습니다.
                 String cmd = slotCommands.get(mappingKey);
-
-                // 만약 Q키 입력인데 "Q" 설정이 없고 "DROP" 설정이 있다면 대체해서 찾습니다.
                 if (cmd == null && "Q".equals(mappingKey)) {
                     cmd = slotCommands.get("DROP");
                 }
-
                 return cmd;
             }
         }
@@ -269,17 +276,52 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
         });
     }
 
+    @Override
+    public ItemStack getFakeItem(int slot) {
+        if (slot < MIN_MENU_SLOT || slot > MAX_MENU_SLOT) return null;
+        return com.gmail.bobason01.util.ItemBuilder.get(String.valueOf(slot));
+    }
+
+    @Override
+    public boolean isFakeSlot(int slot) {
+        return slotUsageMap.getOrDefault(slot, false);
+    }
+
+    @Override
+    public void forceUpdatePlayerView(Player player) {
+        postUpdatePlayerView(player);
+    }
+
+    @Override
+    public void applyModelIntegration(ItemMeta meta, int customModelData, String itemModelKey) {
+        if (meta == null) return;
+
+        if (customModelData != 0) {
+            meta.setCustomModelData(customModelData);
+        }
+
+        if (itemModelKey != null && !itemModelKey.isBlank()) {
+            try {
+                if (itemModelKey.indexOf(':') != -1) {
+                    meta.setItemModel(NamespacedKey.fromString(itemModelKey));
+                } else {
+                    meta.setItemModel(NamespacedKey.minecraft(itemModelKey));
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
     public static class CSCCommand implements CommandExecutor, TabCompleter {
         @Override
         public boolean onCommand(@Nonnull CommandSender sender, @Nonnull Command command,
                                  @Nonnull String label, @Nonnull String[] args) {
             if (!sender.hasPermission("csc.admin")) {
-                sendPrefixed(sender, Component.text("You do not have permission.", NamedTextColor.RED));
+                sendPrefixed(sender, Component.text("You do not have permission", NamedTextColor.RED));
                 return true;
             }
             if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
                 CraftSlotCommands.getInstance().reloadPlugin();
-                sendPrefixed(sender, Component.text("Reloaded successfully.", NamedTextColor.GREEN));
+                sendPrefixed(sender, Component.text("Reloaded successfully", NamedTextColor.GREEN));
                 return true;
             }
             sendPrefixed(sender, Component.text("CraftSlotCommands", NamedTextColor.AQUA));
@@ -293,7 +335,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener {
         }
 
         private void sendPrefixed(CommandSender sender, Component msg) {
-            sender.sendMessage(Component.text("[CSC4] ", NamedTextColor.GRAY).append(msg));
+            sender.sendMessage(Component.text("CSC4 ", NamedTextColor.GRAY).append(msg));
         }
     }
 }

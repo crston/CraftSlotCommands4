@@ -2,13 +2,14 @@ package com.gmail.bobason01.util;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 
+// 아이템 모델 데이터 구조체입니다
 public record ItemModel(
         String material,
         String name,
         List<String> lore,
         int model,
+        String itemModel,
         int damage,
         boolean unbreakable,
         boolean stripAttributes,
@@ -18,21 +19,6 @@ public record ItemModel(
     public ItemModel {
         lore = lore == null ? Collections.emptyList() : List.copyOf(lore);
         hideFlags = hideFlags == null ? Collections.emptyList() : List.copyOf(hideFlags);
-        material = Objects.requireNonNullElse(material, "BARRIER");
-    }
-
-    @Override
-    public String toString() {
-        return "ItemModel[" +
-                "material=" + material +
-                ", name=" + name +
-                ", model=" + model +
-                ", damage=" + damage +
-                ", unbreakable=" + unbreakable +
-                ", stripAttributes=" + stripAttributes +
-                ", hideAllFlags=" + hideAllFlags +
-                ", loreSize=" + lore.size() +
-                ", hideFlagsSize=" + hideFlags.size() +
-                ']';
+        material = material == null ? "BARRIER" : material;
     }
 }

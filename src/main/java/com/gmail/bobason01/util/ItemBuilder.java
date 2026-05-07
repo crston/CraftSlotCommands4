@@ -1,5 +1,6 @@
 package com.gmail.bobason01.util;
 
+import com.gmail.bobason01.api.CraftSlotAPIProvider;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
@@ -17,13 +18,14 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
+// 아이템을 빌드하고 캐싱하는 유틸리티 클래스입니다
 public final class ItemBuilder {
 
     private static final MiniMessage MM = MiniMessage.miniMessage();
     private static final Logger LOGGER = Bukkit.getLogger();
-    private static final String LOGGER_PREFIX = "[EcoSystem | ItemBuilder] ";
+    private static final String LOGGER_PREFIX = "EcoSystem ItemBuilder ";
 
-    private static final ItemStack ERROR_ITEM_CLONE;
+    private static final ItemStack ERROR_ITEM;
     private static final Map<String, ItemStack> CACHE = new ConcurrentHashMap<>();
     private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new HashMap<>();
 
@@ -36,22 +38,26 @@ public final class ItemBuilder {
             });
 
     private static final String NON_ITALIC = "<italic:false>";
-    private static final EnumSet<ItemFlag> ALL_FLAGS = EnumSet.allOf(ItemFlag.class);
+    private static final ItemFlag[] ALL_FLAGS_ARRAY = ItemFlag.values();
+    private static final Attribute[] ATTRIBUTES_ARRAY = Attribute.values();
+    private static final EquipmentSlot[] SLOTS_ARRAY = EquipmentSlot.values();
 
     static {
         ItemStack item = new ItemStack(Material.BARRIER);
         ItemMeta meta = item.getItemMeta();
-        meta.displayName(MM.deserialize("<dark_red>ERROR"));
-        meta.lore(List.of(MM.deserialize("<red>Check plugin configuration.")));
-        item.setItemMeta(meta);
-        ERROR_ITEM_CLONE = item;
+        if (meta != null) {
+            meta.displayName(MM.deserialize("<dark_red>ERROR"));
+            meta.lore(List.of(MM.deserialize("<red>Check plugin configuration")));
+            item.setItemMeta(meta);
+        }
+        ERROR_ITEM = item;
 
-        for (Attribute attribute : Attribute.values()) {
-            for (EquipmentSlot slot : EquipmentSlot.values()) {
-                String key = attribute.name() + ":" + slot.name();
+        for (Attribute attribute : ATTRIBUTES_ARRAY) {
+            for (EquipmentSlot slot : SLOTS_ARRAY) {
+                String key = attribute.name() + slot.name();
                 ZERO_MODIFIERS.put(key, new AttributeModifier(
                         UUID.nameUUIDFromBytes(key.getBytes()),
-                        "zero_" + attribute.name().toLowerCase(Locale.ROOT),
+                        "zero" + attribute.name().toLowerCase(Locale.ROOT),
                         0.0,
                         AttributeModifier.Operation.ADD_NUMBER,
                         slot
@@ -60,9 +66,9 @@ public final class ItemBuilder {
         }
     }
 
-    private ItemBuilder() {
-    }
+    private ItemBuilder() {}
 
+    // 설정을 로드하고 캐시를 채웁니다
     public static void loadFromConfig(ConfigurationSection root) {
         CACHE.clear();
         if (root == null) return;
@@ -77,6 +83,7 @@ public final class ItemBuilder {
                         section.getString("name"),
                         section.getStringList("lore"),
                         section.getInt("model"),
+                        section.getString("item-model"),
                         section.getInt("damage"),
                         section.getBoolean("unbreakable"),
                         section.getBoolean("strip-attributes"),
@@ -85,24 +92,22 @@ public final class ItemBuilder {
                 );
                 CACHE.put(key, build(model));
             } catch (Exception e) {
-                log("Failed to build item '" + key + "': " + e.getMessage());
-                CACHE.put(key, ERROR_ITEM_CLONE.clone());
+                LOGGER.warning(LOGGER_PREFIX + "Failed to build item " + key);
+                CACHE.put(key, ERROR_ITEM.clone());
             }
         }
     }
 
+    // 캐시에서 아이템을 가져옵니다
     public static ItemStack get(String key) {
         ItemStack original = CACHE.get(key);
-        return original != null ? original.clone() : ERROR_ITEM_CLONE.clone();
+        return original != null ? original.clone() : ERROR_ITEM.clone();
     }
 
+    // 아이템 모델 객체를 기반으로 아이템을 실제로 빌드합니다
     public static ItemStack build(ItemModel model) {
-        if (model.material() == null || model.material().isBlank()) {
-            throw new IllegalArgumentException("Material field is missing or blank");
-        }
-
         Material mat = Material.matchMaterial(model.material());
-        if (mat == null) throw new IllegalArgumentException("Invalid material: " + model.material());
+        if (mat == null) mat = Material.BARRIER;
 
         ItemStack item = new ItemStack(mat);
         ItemMeta meta = item.getItemMeta();
@@ -111,10 +116,10 @@ public final class ItemBuilder {
         if (model.name() != null) {
             meta.displayName(parse(model.name()));
         }
-        if (model.model() != 0) {
-            meta.setCustomModelData(model.model());
-        }
-        if (model.lore() != null && !model.lore().isEmpty()) {
+
+        CraftSlotAPIProvider.get().applyModelIntegration(meta, model.model(), model.itemModel());
+
+        if (!model.lore().isEmpty()) {
             meta.lore(model.lore().stream().map(ItemBuilder::parse).toList());
         }
         if (model.unbreakable()) {
@@ -125,23 +130,20 @@ public final class ItemBuilder {
         }
 
         if (model.hideAllFlags()) {
-            meta.addItemFlags(ALL_FLAGS.toArray(new ItemFlag[0]));
-        } else if (model.hideFlags() != null) {
+            meta.addItemFlags(ALL_FLAGS_ARRAY);
+        } else if (!model.hideFlags().isEmpty()) {
             for (String flagName : model.hideFlags()) {
                 try {
                     meta.addItemFlags(ItemFlag.valueOf(flagName.trim().toUpperCase(Locale.ROOT)));
-                } catch (IllegalArgumentException e) {
-                    log("Unknown ItemFlag: " + flagName);
-                }
+                } catch (IllegalArgumentException ignored) {}
             }
         }
 
         if (model.stripAttributes()) {
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
-            for (Attribute attribute : Attribute.values()) {
-                for (EquipmentSlot slot : EquipmentSlot.values()) {
-                    String key = attribute.name() + ":" + slot.name();
-                    AttributeModifier mod = ZERO_MODIFIERS.get(key);
+            for (Attribute attribute : ATTRIBUTES_ARRAY) {
+                for (EquipmentSlot slot : SLOTS_ARRAY) {
+                    AttributeModifier mod = ZERO_MODIFIERS.get(attribute.name() + slot.name());
                     if (mod != null) meta.addAttributeModifier(attribute, mod);
                 }
             }
@@ -151,6 +153,7 @@ public final class ItemBuilder {
         return item;
     }
 
+    // 미니메시지와 레거시 코드를 파싱합니다
     private static Component parse(String text) {
         if (text == null || text.isEmpty()) return Component.empty();
         return PARSE_CACHE.computeIfAbsent(text, t -> MM.deserialize(convertLegacyToMiniMessage(t)));
@@ -197,8 +200,4 @@ public final class ItemBuilder {
             Map.entry('m', "<strikethrough>"), Map.entry('n', "<underlined>"),
             Map.entry('o', "<italic>"), Map.entry('r', "<reset>")
     );
-
-    private static void log(String message) {
-        LOGGER.warning(LOGGER_PREFIX + message);
-    }
 }

@@ -4,6 +4,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
+// Folia 코어 환경과 일반 Bukkit 환경을 모두 지원하는 스케줄러 래퍼입니다
 public final class SchedulerUtil {
 
     private static boolean folia = false;
@@ -18,7 +19,7 @@ public final class SchedulerUtil {
         try {
             Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
             folia = true;
-            Bukkit.getLogger().info("[SchedulerUtil] Folia detected: regionized scheduling enabled.");
+            Bukkit.getLogger().info("Folia detected regionized scheduling enabled");
         } catch (ClassNotFoundException e) {
             folia = false;
         }
