@@ -41,8 +41,7 @@ items-enabled: true
 # 제작 공간에 사용할 메뉴 아이템을 설정합니다
 
 # --------------------------------------#
-# model - CustomModelData / damage - Durability / hide-flags - Hide Flags / lore - Lore
-# item-model - Item Model (1.21.4+)
+# model - CustomModelData / Item Model / damage - Durability / hide-flags - Hide Flags / lore - Lore
 # skull-owner-uuid - Player Head Item Type 1 Value
 # skull-texture-value - Player Head Item Type 2 Value
 

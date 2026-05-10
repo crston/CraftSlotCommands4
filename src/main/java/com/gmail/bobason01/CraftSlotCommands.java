@@ -34,7 +34,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static com.gmail.bobason01.util.InventoryUtil.isSelf2x2Crafting;
 
-// 플러그인 메인 클래스이자 제공된 API의 실제 구현체입니다
 public final class CraftSlotCommands extends JavaPlugin implements Listener, CraftSlotAPI {
 
     private static final int MIN_MENU_SLOT = 0;
@@ -175,12 +174,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
 
     @EventHandler(ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
-        if (event.getView().getType() != InventoryType.CRAFTING) return;
-
-        int rawSlot = event.getRawSlot();
-        if (rawSlot < MIN_MENU_SLOT || rawSlot > MAX_MENU_SLOT) return;
-
-        if (!slotUsageMap.getOrDefault(rawSlot, false)) return;
+        if (!isMenuClick(event)) return;
 
         Player player = (Player) event.getWhoClicked();
 
@@ -189,7 +183,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
             if (System.currentTimeMillis() - closed < IGNORE_CLICK_MS) return;
         }
 
-        String command = resolveCommand(event, rawSlot);
+        String command = resolveCommand(event, event.getRawSlot());
         if (command == null || command.isBlank()) return;
 
         event.setCancelled(true);
@@ -285,6 +279,15 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
     @Override
     public boolean isFakeSlot(int slot) {
         return slotUsageMap.getOrDefault(slot, false);
+    }
+
+    @Override
+    public boolean isMenuClick(InventoryClickEvent event) {
+        if (event == null) return false;
+        if (event.getView().getType() != InventoryType.CRAFTING) return false;
+        int rawSlot = event.getRawSlot();
+        if (rawSlot < MIN_MENU_SLOT || rawSlot > MAX_MENU_SLOT) return false;
+        return isFakeSlot(rawSlot);
     }
 
     @Override
