@@ -3,17 +3,10 @@ package com.gmail.bobason01.listener;
 import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
-import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
+import com.gmail.bobason01.CraftSlotCommands;
 import com.gmail.bobason01.util.ItemBuilder;
 import com.gmail.bobason01.util.SchedulerUtil;
 import com.gmail.bobason01.util.UpdateTaskPool;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
-import it.unimi.dsi.fastutil.ints.IntSet;
-import it.unimi.dsi.fastutil.ints.IntSets;
-import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
@@ -25,85 +18,85 @@ import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.plugin.Plugin;
+import org.bukkit.inventory.InventoryView;
 
-import java.util.Arrays;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-// 가짜 아이템을 렌더링하고 패킷을 제어하는 리스너입니다
 public class CraftSlotFakeItemListener implements Listener {
 
-    private final Plugin plugin;
+    private final CraftSlotCommands plugin;
     private final Logger logger;
 
-    // 성능 최적화를 위해 Fastutil 맵을 사용하고 락 프리 교체 방식을 적용합니다
-    private volatile Int2ObjectMap<ItemStack> menuItems = Int2ObjectMaps.emptyMap();
-    private volatile IntSet activeMenuSlots = IntSets.emptySet();
-    private volatile ItemStack[] baseFakeInventory = new ItemStack[45];
+    // 플레이어 상태별(MAIN, STAT_PAGE 등) 독립된 데이터 렌더링 풀 구성
+    private final Map<String, ItemStack[]> pageBaseFakeInventory = new ConcurrentHashMap<>();
+    private final Map<String, boolean[]> pageFixedUsageArray = new ConcurrentHashMap<>();
+    private final Map<String, Map<Integer, ItemStack>> pageMenuItems = new ConcurrentHashMap<>();
+
     private volatile boolean itemsEnabled = true;
 
-    private final Object2LongOpenHashMap<UUID> lastUpdate = new Object2LongOpenHashMap<>();
+    private final Map<UUID, Long> lastUpdate = new ConcurrentHashMap<>();
     private static final long MIN_UPDATE_INTERVAL_MS = 100L;
     private static final ItemStack AIR = new ItemStack(Material.AIR);
 
-    public CraftSlotFakeItemListener(FileConfiguration config, Plugin plugin) {
+    public CraftSlotFakeItemListener(CraftSlotCommands plugin) {
         this.plugin = plugin;
         this.logger = plugin.getLogger();
-        lastUpdate.defaultReturnValue(0L);
-        reload(config);
     }
 
-    // 설정 리로딩 시 비동기 스레드에서도 안전하도록 새로운 객체를 생성하여 원자적으로 덮어씌웁니다
     public void reload(FileConfiguration config) {
-        IntSet newActiveSlots = new IntOpenHashSet();
-        Int2ObjectMap<ItemStack> newMenuItems = new Int2ObjectOpenHashMap<>();
-        ItemStack[] newBaseInventory = new ItemStack[45];
-        Arrays.fill(newBaseInventory, AIR);
+        this.itemsEnabled = config.getBoolean("items-enabled", true);
+        pageBaseFakeInventory.clear();
+        pageFixedUsageArray.clear();
+        pageMenuItems.clear();
 
-        boolean newItemsEnabled = config.getBoolean("items-enabled", true);
+        ConfigurationSection rootPages = config.getConfigurationSection("menu-pages");
+        if (rootPages == null) return;
 
-        ConfigurationSection itemSection = config.getConfigurationSection("slot-item");
-        if (itemSection != null) {
-            ItemBuilder.loadFromConfig(itemSection);
-        }
+        for (String pageKey : rootPages.getKeys(false)) {
+            ConfigurationSection pageSec = rootPages.getConfigurationSection(pageKey);
+            if (pageSec == null) continue;
 
-        ConfigurationSection useSlotSection = config.getConfigurationSection("use-slot");
-        if (useSlotSection != null) {
-            for (String key : useSlotSection.getKeys(false)) {
-                try {
-                    int slot = Integer.parseInt(key);
-                    if (useSlotSection.getBoolean(key)) {
-                        newActiveSlots.add(slot);
-                        if (newItemsEnabled) {
-                            ItemStack item = ItemBuilder.get(key);
-                            newMenuItems.put(slot, item);
+            Map<Integer, ItemStack> menuItems = new HashMap<>();
+            ItemStack[] baseFakeInventory = new ItemStack[45];
+            Arrays.fill(baseFakeInventory, AIR);
+            boolean[] fixedUsageArray = new boolean[5];
+
+            ConfigurationSection useSlotSection = pageSec.getConfigurationSection("use-slot");
+            if (useSlotSection != null) {
+                for (String key : useSlotSection.getKeys(false)) {
+                    try {
+                        int slot = Integer.parseInt(key);
+                        if (useSlotSection.getBoolean(key)) {
+                            if (slot >= 0 && slot < 5) {
+                                fixedUsageArray[slot] = true;
+                            }
+                            if (itemsEnabled) {
+                                ItemStack item = ItemBuilder.get(pageKey, key);
+                                menuItems.put(slot, item);
+                                if (slot >= 0 && slot < 5) {
+                                    baseFakeInventory[slot] = item.clone();
+                                }
+                            }
                         }
-                    }
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-
-        if (newItemsEnabled) {
-            for (int i = 0; i <= 4; i++) {
-                ItemStack item = newMenuItems.get(i);
-                if (item != null) {
-                    newBaseInventory[i] = item.clone();
+                    } catch (NumberFormatException ignored) {}
                 }
             }
-        }
 
-        this.activeMenuSlots = newActiveSlots;
-        this.menuItems = newMenuItems;
-        this.baseFakeInventory = newBaseInventory;
-        this.itemsEnabled = newItemsEnabled;
+            pageMenuItems.put(pageKey, menuItems);
+            pageBaseFakeInventory.put(pageKey, baseFakeInventory);
+            pageFixedUsageArray.put(pageKey, fixedUsageArray);
+        }
     }
 
     private boolean shouldUpdate(Player player) {
         long now = System.currentTimeMillis();
-        long last = lastUpdate.getLong(player.getUniqueId());
+        long last = lastUpdate.getOrDefault(player.getUniqueId(), 0L);
         if (now - last < MIN_UPDATE_INTERVAL_MS) return false;
         lastUpdate.put(player.getUniqueId(), now);
         return true;
@@ -132,21 +125,34 @@ public class CraftSlotFakeItemListener implements Listener {
         syncCursorItemAlways(player);
     }
 
-    // 패킷 전송 시 불필요한 아이템 복제본 생성을 방지하여 성능을 극대화합니다
     private void sendMenuViewIfNeeded(Player player) {
         if (!itemsEnabled) return;
 
         GameMode mode = player.getGameMode();
-        InventoryType invType = player.getOpenInventory().getType();
+        InventoryView openInv = player.getOpenInventory();
+        InventoryType invType = openInv.getType();
 
-        if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR
-                || invType == InventoryType.CREATIVE
-                || invType == InventoryType.PLAYER) {
+        if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR || invType == InventoryType.CREATIVE) {
             return;
         }
 
+        // 대형 GUI 플러그인 상점 메뉴와 마찰을 완전히 피하기 위해 탑 인벤토리 스펙 정밀 인스펙션
+        Inventory topInv = openInv.getTopInventory();
+        if (invType != InventoryType.CRAFTING || topInv.getSize() != 5) {
+            return;
+        }
+
+        InventoryHolder holder = topInv.getHolder();
+        if (!(holder instanceof Player) || !holder.equals(player)) {
+            return;
+        }
+
+        String state = plugin.getPlayerState(player.getUniqueId());
+        ItemStack[] baseInv = pageBaseFakeInventory.getOrDefault(state, pageBaseFakeInventory.get("MAIN"));
+        if (baseInv == null) return;
+
         ItemStack[] contents = new ItemStack[45];
-        System.arraycopy(baseFakeInventory, 0, contents, 0, 5);
+        System.arraycopy(baseInv, 0, contents, 0, 5);
 
         ItemStack[] inv = player.getInventory().getContents();
 
@@ -165,6 +171,11 @@ public class CraftSlotFakeItemListener implements Listener {
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
         packet.getIntegers().write(0, 0);
+
+        if (packet.getIntegers().size() > 1) {
+            packet.getIntegers().write(1, 1);
+        }
+
         packet.getItemListModifier().write(0, Arrays.asList(contents));
 
         try {
@@ -178,12 +189,25 @@ public class CraftSlotFakeItemListener implements Listener {
         GameMode mode = player.getGameMode();
         if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) return;
 
+        InventoryView openInv = player.getOpenInventory();
+        if (openInv.getType() != InventoryType.CRAFTING || openInv.getTopInventory().getSize() != 5) {
+            return;
+        }
+
         ItemStack cursor = player.getItemOnCursor();
         player.setItemOnCursor(cursor);
 
         PacketContainer packet = new PacketContainer(PacketType.Play.Server.SET_SLOT);
         packet.getIntegers().write(0, -1);
-        packet.getIntegers().write(1, -1);
+
+        int intSize = packet.getIntegers().size();
+        if (intSize > 2) {
+            packet.getIntegers().write(1, 1);
+            packet.getIntegers().write(2, -1);
+        } else {
+            packet.getIntegers().write(1, -1);
+        }
+
         packet.getItemModifier().write(0, cursor);
 
         try {
@@ -198,14 +222,6 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     @EventHandler
-    public void onRecipeBookClick(PlayerRecipeBookClickEvent event) {
-        InventoryType type = event.getPlayer().getOpenInventory().getTopInventory().getType();
-        if (type == InventoryType.CRAFTING) {
-            event.setCancelled(true);
-        }
-    }
-
-    @EventHandler
     public void onInventoryOpen(InventoryOpenEvent event) {
         Player player = (Player) event.getPlayer();
         if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
@@ -216,6 +232,9 @@ public class CraftSlotFakeItemListener implements Listener {
     public void onInventoryClose(InventoryCloseEvent event) {
         Player player = (Player) event.getPlayer();
         if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
+
+        // 인벤토리를 완전히 닫으면 자동으로 다음 오픈을 위해 기본 상태인 MAIN 레이어로 회수합니다.
+        plugin.setPlayerState(player.getUniqueId(), "MAIN");
         scheduleUpdate(player, 2L);
     }
 
@@ -224,7 +243,11 @@ public class CraftSlotFakeItemListener implements Listener {
         Player player = (Player) event.getWhoClicked();
         if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
 
-        if (event.getView().getType() == InventoryType.CRAFTING && activeMenuSlots.contains(event.getRawSlot())) {
+        int rawSlot = event.getRawSlot();
+        String state = plugin.getPlayerState(player.getUniqueId());
+        boolean[] usages = pageFixedUsageArray.get(state);
+
+        if (event.getView().getType() == InventoryType.CRAFTING && rawSlot >= 0 && rawSlot < 5 && usages != null && usages[rawSlot]) {
             event.setCancelled(true);
         }
         UpdateTaskPool.scheduleCoalesced(player.getUniqueId(), 1L, () -> forceClientRefresh(player));
@@ -235,9 +258,12 @@ public class CraftSlotFakeItemListener implements Listener {
         Player player = (Player) event.getWhoClicked();
         if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE) return;
 
-        if (event.getView().getType() == InventoryType.CRAFTING) {
+        String state = plugin.getPlayerState(player.getUniqueId());
+        boolean[] usages = pageFixedUsageArray.get(state);
+
+        if (event.getView().getType() == InventoryType.CRAFTING && usages != null) {
             for (int rawSlot : event.getRawSlots()) {
-                if (activeMenuSlots.contains(rawSlot)) {
+                if (rawSlot >= 0 && rawSlot < 5 && usages[rawSlot]) {
                     event.setCancelled(true);
                     break;
                 }
@@ -270,9 +296,13 @@ public class CraftSlotFakeItemListener implements Listener {
             SchedulerUtil.runForPlayer(plugin, player, () -> {
                 if (!player.isOnline()) return;
 
-                for (Int2ObjectMap.Entry<ItemStack> entry : menuItems.int2ObjectEntrySet()) {
-                    int slot = entry.getIntKey();
-                    ItemStack expected = entry.getValue();
+                String state = plugin.getPlayerState(player.getUniqueId());
+                boolean[] usages = pageFixedUsageArray.get(state);
+                ItemStack[] menuItemsArray = pageBaseFakeInventory.get(state);
+
+                for (int slot = 0; slot < 5; slot++) {
+                    if (usages == null || !usages[slot]) continue;
+                    ItemStack expected = menuItemsArray[slot];
                     ItemStack current = player.getInventory().getItem(slot);
                     if (current != null && current.isSimilar(expected)) {
                         player.getInventory().setItem(slot, AIR);
@@ -298,6 +328,9 @@ public class CraftSlotFakeItemListener implements Listener {
 
                 PacketContainer packet = new PacketContainer(PacketType.Play.Server.WINDOW_ITEMS);
                 packet.getIntegers().write(0, 0);
+                if (packet.getIntegers().size() > 1) {
+                    packet.getIntegers().write(1, 1);
+                }
                 packet.getItemListModifier().write(0, Arrays.asList(contents));
 
                 try {

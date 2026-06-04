@@ -5,11 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.gmail.bobason01</groupId>
-    <artifactId>CraftSlotCommands4</artifactId>
-    <version>400.0</version>
+    <artifactId>CraftSlotCommands5</artifactId>
+    <version>500.0</version>
     <packaging>jar</packaging>
 
-    <name>CraftSlotCommands4</name>
+    <name>CraftSlotCommands5</name>
 
     <properties>
         <java.version>17</java.version>
@@ -28,19 +28,6 @@
                     <target>17</target>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.3</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
         <resources>
             <resource>
@@ -51,6 +38,10 @@
     </build>
 
     <repositories>
+        <repository>
+            <id>spigot-repo</id>
+            <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
+        </repository>
         <repository>
             <id>sonatype</id>
             <url>https://oss.sonatype.org/content/groups/public/</url>
@@ -71,16 +62,13 @@
             <id>floodgate-repo</id>
             <url>https://repo.opencollab.dev/maven-snapshots</url>
         </repository>
-        <repository>
-            <id>papermc</id>
-            <url>https://repo.papermc.io/repository/maven-public/</url>
-        </repository>
     </repositories>
+
     <dependencies>
         <dependency>
-            <groupId>io.papermc.paper</groupId>
-            <artifactId>paper-api</artifactId>
-            <version>1.21.8-R0.1-SNAPSHOT</version>
+            <groupId>org.spigotmc</groupId>
+            <artifactId>spigot-api</artifactId>
+            <version>1.21.4-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -106,6 +94,12 @@
             <artifactId>api</artifactId>
             <version>2.2.0-SNAPSHOT</version>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>it.unimi.dsi</groupId>
+            <artifactId>fastutil</artifactId>
+            <version>8.5.15</version>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
 </project>

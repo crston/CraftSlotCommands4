@@ -5,7 +5,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-// 베드락 에디션 접속 유저를 검사하는 유틸리티입니다
 public final class BedrockDetector {
 
     private static final Set<UUID> BEDROCK_CACHE = ConcurrentHashMap.newKeySet();

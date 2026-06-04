@@ -4,10 +4,22 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-// Folia 코어 환경과 일반 Bukkit 환경을 모두 지원하는 스케줄러 래퍼입니다
+import java.lang.reflect.Method;
+import java.util.function.Consumer;
+
 public final class SchedulerUtil {
 
     private static boolean folia = false;
+
+    private static Object globalRegionScheduler;
+    private static Object asyncScheduler;
+
+    private static Method globalExecuteMethod;
+    private static Method globalRunDelayedMethod;
+    private static Method asyncRunNowMethod;
+    private static Method playerSchedulerMethod;
+    private static Method playerRunMethod;
+    private static Method playerRunDelayedMethod;
 
     static {
         detectFolia();
@@ -19,9 +31,31 @@ public final class SchedulerUtil {
         try {
             Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
             folia = true;
-            Bukkit.getLogger().info("Folia detected regionized scheduling enabled");
-        } catch (ClassNotFoundException e) {
+
+            Method getGlobalRegionScheduler = Bukkit.class.getMethod("getGlobalRegionScheduler");
+            globalRegionScheduler = getGlobalRegionScheduler.invoke(null);
+            Class<?> globalSchedulerClass = globalRegionScheduler.getClass();
+
+            globalExecuteMethod = globalSchedulerClass.getMethod("execute", Plugin.class, Runnable.class);
+            globalRunDelayedMethod = globalSchedulerClass.getMethod("runDelayed", Plugin.class, Consumer.class, long.class);
+
+            Method getAsyncScheduler = Bukkit.class.getMethod("getAsyncScheduler");
+            asyncScheduler = getAsyncScheduler.invoke(null);
+            Class<?> asyncSchedulerClass = asyncScheduler.getClass();
+
+            asyncRunNowMethod = asyncSchedulerClass.getMethod("runNow", Plugin.class, Consumer.class);
+
+            playerSchedulerMethod = Player.class.getMethod("getScheduler");
+            Class<?> playerSchedulerClass = playerSchedulerMethod.getReturnType();
+
+            playerRunMethod = playerSchedulerClass.getMethod("run", Plugin.class, Consumer.class, Runnable.class);
+            playerRunDelayedMethod = playerSchedulerClass.getMethod("runDelayed", Plugin.class, Consumer.class, Runnable.class, long.class);
+
+            Bukkit.getLogger().info("Folia detected: Reflection-backed regionized scheduling enabled");
+        } catch (Throwable e) {
             folia = false;
+            globalRegionScheduler = null;
+            asyncScheduler = null;
         }
     }
 
@@ -30,42 +64,58 @@ public final class SchedulerUtil {
     }
 
     public static void run(Plugin plugin, Runnable task) {
-        if (folia) {
-            Bukkit.getGlobalRegionScheduler().execute(plugin, task);
-        } else {
-            Bukkit.getScheduler().runTask(plugin, task);
+        if (folia && globalExecuteMethod != null) {
+            try {
+                globalExecuteMethod.invoke(globalRegionScheduler, plugin, task);
+                return;
+            } catch (Throwable ignored) {}
         }
+        Bukkit.getScheduler().runTask(plugin, task);
     }
 
     public static void runLater(Plugin plugin, Runnable task, long delayTicks) {
-        if (folia) {
-            Bukkit.getGlobalRegionScheduler().runDelayed(plugin, t -> task.run(), delayTicks);
-        } else {
-            Bukkit.getScheduler().runTaskLater(plugin, task, delayTicks);
+        if (folia && globalRunDelayedMethod != null) {
+            try {
+                Consumer<Object> consumer = t -> task.run();
+                globalRunDelayedMethod.invoke(globalRegionScheduler, plugin, consumer, delayTicks);
+                return;
+            } catch (Throwable ignored) {}
         }
+        Bukkit.getScheduler().runTaskLater(plugin, task, delayTicks);
     }
 
     public static void runAsync(Plugin plugin, Runnable task) {
-        Bukkit.getAsyncScheduler().runNow(plugin, scheduledTask -> task.run());
+        if (folia && asyncRunNowMethod != null) {
+            try {
+                Consumer<Object> consumer = scheduledTask -> task.run();
+                asyncRunNowMethod.invoke(asyncScheduler, plugin, consumer);
+                return;
+            } catch (Throwable ignored) {}
+        }
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, task);
     }
 
     public static void runForPlayer(Plugin plugin, Player player, Runnable task) {
-        if (folia) {
+        if (folia && playerSchedulerMethod != null && playerRunMethod != null) {
             try {
-                player.getScheduler().run(plugin, t -> task.run(), null);
+                Object scheduler = playerSchedulerMethod.invoke(player);
+                Consumer<Object> consumer = t -> task.run();
+                playerRunMethod.invoke(scheduler, plugin, consumer, null);
+                return;
             } catch (Throwable ignored) {}
-        } else {
-            Bukkit.getScheduler().runTask(plugin, task);
         }
+        Bukkit.getScheduler().runTask(plugin, task);
     }
 
     public static void runForPlayerLater(Plugin plugin, Player player, Runnable task, long delayTicks) {
-        if (folia) {
+        if (folia && playerSchedulerMethod != null && playerRunDelayedMethod != null) {
             try {
-                player.getScheduler().runDelayed(plugin, t -> task.run(), null, delayTicks);
+                Object scheduler = playerSchedulerMethod.invoke(player);
+                Consumer<Object> consumer = t -> task.run();
+                playerRunDelayedMethod.invoke(scheduler, plugin, consumer, null, delayTicks);
+                return;
             } catch (Throwable ignored) {}
-        } else {
-            Bukkit.getScheduler().runTaskLater(plugin, task, delayTicks);
         }
+        Bukkit.getScheduler().runTaskLater(plugin, task, delayTicks);
     }
 }

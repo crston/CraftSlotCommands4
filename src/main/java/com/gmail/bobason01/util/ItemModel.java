@@ -3,7 +3,6 @@ package com.gmail.bobason01.util;
 import java.util.Collections;
 import java.util.List;
 
-// 아이템 모델 데이터 구조체입니다
 public record ItemModel(
         String material,
         String name,

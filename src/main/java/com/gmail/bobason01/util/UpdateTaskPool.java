@@ -9,17 +9,17 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-// 잦은 이벤트 발생 시 중복 작업을 병합하여 서버 부하를 줄이는 풀 시스템입니다
 public final class UpdateTaskPool {
 
     private static final class Entry {
-        long runAtTick;
+        long runAtTimestamp;
         Runnable action;
         BukkitTask task;
     }
 
     private static final Map<UUID, Entry> TASKS = new ConcurrentHashMap<>();
     private static volatile Plugin plugin;
+    private static final long TICK_MS = 50L;
 
     private UpdateTaskPool() {}
 
@@ -31,19 +31,19 @@ public final class UpdateTaskPool {
         if (plugin == null) return;
 
         TASKS.compute(uuid, (id, prev) -> {
-            final long desiredTick = Bukkit.getCurrentTick() + Math.max(0L, delayTicks);
+            final long desiredTimestamp = System.currentTimeMillis() + (Math.max(0L, delayTicks) * TICK_MS);
 
             if (prev == null) {
                 Entry e = new Entry();
-                e.runAtTick = desiredTick;
+                e.runAtTimestamp = desiredTimestamp;
                 e.action = action;
                 scheduleInternal(id, delayTicks);
                 return e;
             }
 
-            if (desiredTick < prev.runAtTick) {
+            if (desiredTimestamp < prev.runAtTimestamp) {
                 cancelSafely(prev);
-                prev.runAtTick = desiredTick;
+                prev.runAtTimestamp = desiredTimestamp;
                 prev.action = action;
                 scheduleInternal(id, delayTicks);
                 return prev;

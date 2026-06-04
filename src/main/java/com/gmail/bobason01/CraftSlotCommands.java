@@ -1,22 +1,20 @@
 package com.gmail.bobason01;
 
-import com.destroystokyo.paper.event.player.PlayerRecipeBookClickEvent;
+import com.comphenix.protocol.PacketType;
+import com.comphenix.protocol.ProtocolLibrary;
+import com.comphenix.protocol.events.ListenerPriority;
+import com.comphenix.protocol.events.PacketAdapter;
+import com.comphenix.protocol.events.PacketEvent;
 import com.gmail.bobason01.api.CraftSlotAPI;
 import com.gmail.bobason01.api.CraftSlotAPIProvider;
 import com.gmail.bobason01.listener.CraftSlotFakeItemListener;
 import com.gmail.bobason01.util.BedrockDetector;
 import com.gmail.bobason01.util.UpdateTaskPool;
 import com.gmail.bobason01.util.SchedulerUtil;
-import it.unimi.dsi.fastutil.ints.Int2BooleanMap;
-import it.unimi.dsi.fastutil.ints.Int2BooleanMaps;
-import it.unimi.dsi.fastutil.ints.Int2BooleanOpenHashMap;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import com.gmail.bobason01.util.InventoryUtil;
 import me.clip.placeholderapi.PlaceholderAPI;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.NamespacedKey;
 import org.bukkit.command.*;
 import org.bukkit.configuration.ConfigurationSection;
@@ -24,6 +22,8 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.*;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -31,8 +31,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 import javax.annotation.Nonnull;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-
-import static com.gmail.bobason01.util.InventoryUtil.isSelf2x2Crafting;
 
 public final class CraftSlotCommands extends JavaPlugin implements Listener, CraftSlotAPI {
 
@@ -43,11 +41,12 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
     private static CraftSlotCommands instance;
     private CraftSlotFakeItemListener fakeItemListener;
 
-    private volatile Int2ObjectMap<String> slotCommandCache = Int2ObjectMaps.emptyMap();
-    private volatile Int2BooleanMap slotUsageMap = Int2BooleanMaps.EMPTY_MAP;
-    private volatile Int2ObjectMap<Map<String, String>> keybindCommandMap = Int2ObjectMaps.emptyMap();
-
+    private final Map<UUID, String> playerMenuState = new ConcurrentHashMap<>();
     private final Map<UUID, Long> bedrockCloseTimestamps = new ConcurrentHashMap<>();
+
+    private final Map<String, Map<Integer, String>> pageSlotCommandCache = new ConcurrentHashMap<>();
+    private final Map<String, Map<Integer, Boolean>> pageSlotUsageMap = new ConcurrentHashMap<>();
+    private final Map<String, Map<Integer, Map<String, String>>> pageKeybindCommandMap = new ConcurrentHashMap<>();
 
     private volatile String commandType = "crafting-slot";
 
@@ -68,8 +67,10 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
 
         saveDefaultConfig();
         UpdateTaskPool.init(this);
+
         registerCommand();
         registerEvents();
+        registerProtocolLib();
         reloadPlugin();
     }
 
@@ -93,66 +94,163 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
 
     private void registerEvents() {
         Bukkit.getPluginManager().registerEvents(this, this);
-        fakeItemListener = new CraftSlotFakeItemListener(getConfig(), this);
+        fakeItemListener = new CraftSlotFakeItemListener(this);
         Bukkit.getPluginManager().registerEvents(fakeItemListener, this);
+    }
+
+    private void registerProtocolLib() {
+        // 최적화 포인트: 클라이언트의 레시피 북 UI 개폐 동작 설정 및 레시피 자동 완성 패킷 필터를 완전히 차단하여
+        // 바닐라 레시피 기능의 연산 낭비를 100% 동기적으로 원천 봉쇄합니다.
+        ProtocolLibrary.getProtocolManager().addPacketListener(
+                new PacketAdapter(this, ListenerPriority.NORMAL, PacketType.Play.Client.RECIPE_SETTINGS) {
+                    @Override
+                    public void onPacketReceiving(PacketEvent event) {
+                        Player player = event.getPlayer();
+                        if (InventoryUtil.isSelf2x2Crafting(player.getOpenInventory())) {
+                            event.setCancelled(true);
+                            SchedulerUtil.run(plugin, () -> postUpdatePlayerView(player));
+                        }
+                    }
+                }
+        );
+
+        ProtocolLibrary.getProtocolManager().addPacketListener(
+                new PacketAdapter(this, ListenerPriority.NORMAL, PacketType.Play.Client.AUTO_RECIPE) {
+                    @Override
+                    public void onPacketReceiving(PacketEvent event) {
+                        Player player = event.getPlayer();
+                        if (InventoryUtil.isSelf2x2Crafting(player.getOpenInventory())) {
+                            event.setCancelled(true);
+                            SchedulerUtil.run(plugin, () -> postUpdatePlayerView(player));
+                        }
+                    }
+                }
+        );
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        playerMenuState.put(player.getUniqueId(), "MAIN");
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        playerMenuState.remove(uuid);
+        bedrockCloseTimestamps.remove(uuid);
+    }
+
+    public String getPlayerState(UUID uuid) {
+        return playerMenuState.getOrDefault(uuid, "MAIN");
+    }
+
+    public void setPlayerState(UUID uuid, String state) {
+        playerMenuState.put(uuid, state);
+        Player player = Bukkit.getPlayer(uuid);
+        if (player != null && player.isOnline()) {
+            if (fakeItemListener != null) {
+                fakeItemListener.forceClientRefresh(player);
+            }
+        }
+    }
+
+    public String getMessage(String key) {
+        String msg;
+        switch (key) {
+            case "prefix": msg = "&7CSC5 "; break;
+            case "no-permission": msg = "&cYou do not have permission to execute this command."; break;
+            case "reload-success": msg = "&aConfiguration files reloaded successfully."; break;
+            default: msg = key; break;
+        }
+        return ChatColor.translateAlternateColorCodes('&', msg);
     }
 
     public synchronized void reloadPlugin() {
         SchedulerUtil.runAsync(this, () -> {
             reloadConfig();
 
-            Int2ObjectOpenHashMap<String> newSlotCommandCache = new Int2ObjectOpenHashMap<>();
-            Int2BooleanOpenHashMap newSlotUsageMap = new Int2BooleanOpenHashMap();
-            Int2ObjectOpenHashMap<Map<String, String>> newKeybindCommandMap = new Int2ObjectOpenHashMap<>();
-
-            String newCommandType = getConfig().getString("cmd-type", "crafting-slot").toLowerCase(Locale.ROOT);
-
-            ConfigurationSection useSlotSec = getConfig().getConfigurationSection("use-slot");
-            if (useSlotSec != null) {
-                for (String key : useSlotSec.getKeys(false)) {
-                    try {
-                        newSlotUsageMap.put(Integer.parseInt(key), useSlotSec.getBoolean(key));
-                    } catch (NumberFormatException ignored) {}
+            ConfigurationSection rootPages = getConfig().getConfigurationSection("menu-pages");
+            if (rootPages != null) {
+                for (String pageKey : rootPages.getKeys(false)) {
+                    ConfigurationSection pageSec = rootPages.getConfigurationSection(pageKey);
+                    if (pageSec == null) continue;
+                    ConfigurationSection itemSection = pageSec.getConfigurationSection("slot-item");
+                    if (itemSection != null) {
+                        com.gmail.bobason01.util.ItemBuilder.loadFromConfig(pageKey, itemSection);
+                    }
                 }
             }
 
-            if ("crafting-slot".equals(newCommandType)) {
-                ConfigurationSection sec = getConfig().getConfigurationSection("crafting-slot");
-                if (sec != null) {
-                    for (String key : sec.getKeys(false)) {
-                        try {
-                            int slot = Integer.parseInt(key);
-                            String cmd = sec.getString(key, "").trim();
-                            if (!cmd.isEmpty()) newSlotCommandCache.put(slot, cmd);
-                        } catch (NumberFormatException ignored) {}
-                    }
-                }
-            } else if ("keybind-commands".equals(newCommandType)) {
-                ConfigurationSection sec = getConfig().getConfigurationSection("keybind-commands");
-                if (sec != null) {
-                    for (String slotKey : sec.getKeys(false)) {
-                        try {
-                            int slot = Integer.parseInt(slotKey);
-                            ConfigurationSection slotSection = sec.getConfigurationSection(slotKey);
-                            if (slotSection == null) continue;
+            Map<String, Map<Integer, String>> newPageSlotCommandCache = new HashMap<>();
+            Map<String, Map<Integer, Boolean>> newPageSlotUsageMap = new HashMap<>();
+            Map<String, Map<Integer, Map<String, String>>> newPageKeybindCommandMap = new HashMap<>();
 
-                            Map<String, String> binds = new HashMap<>();
-                            for (String key : slotSection.getKeys(false)) {
-                                String cmd = slotSection.getString(key);
-                                if (cmd != null && !cmd.isBlank()) {
-                                    binds.put(key.toUpperCase(Locale.ROOT), cmd);
-                                }
-                            }
-                            newKeybindCommandMap.put(slot, binds);
-                        } catch (NumberFormatException ignored) {}
+            String newCommandType = getConfig().getString("cmd-type", "crafting-slot").toLowerCase(Locale.ROOT);
+
+            if (rootPages != null) {
+                for (String pageKey : rootPages.getKeys(false)) {
+                    ConfigurationSection pageSec = rootPages.getConfigurationSection(pageKey);
+                    if (pageSec == null) continue;
+
+                    Map<Integer, Boolean> slotUsageMap = new HashMap<>();
+                    ConfigurationSection useSlotSec = pageSec.getConfigurationSection("use-slot");
+                    if (useSlotSec != null) {
+                        for (String key : useSlotSec.getKeys(false)) {
+                            try {
+                                slotUsageMap.put(Integer.parseInt(key), useSlotSec.getBoolean(key));
+                            } catch (NumberFormatException ignored) {}
+                        }
                     }
+                    newPageSlotUsageMap.put(pageKey, slotUsageMap);
+
+                    Map<Integer, String> slotCommandCache = new HashMap<>();
+                    Map<Integer, Map<String, String>> keybindCommandMap = new HashMap<>();
+
+                    if ("crafting-slot".equals(newCommandType)) {
+                        ConfigurationSection sec = pageSec.getConfigurationSection("crafting-slot");
+                        if (sec != null) {
+                            for (String key : sec.getKeys(false)) {
+                                try {
+                                    int slot = Integer.parseInt(key);
+                                    String cmd = sec.getString(key, "").trim();
+                                    if (!cmd.isEmpty()) slotCommandCache.put(slot, cmd);
+                                } catch (NumberFormatException ignored) {}
+                            }
+                        }
+                    } else if ("keybind-commands".equals(newCommandType)) {
+                        ConfigurationSection sec = pageSec.getConfigurationSection("keybind-commands");
+                        if (sec != null) {
+                            for (String slotKey : sec.getKeys(false)) {
+                                try {
+                                    int slot = Integer.parseInt(slotKey);
+                                    ConfigurationSection slotSection = sec.getConfigurationSection(slotKey);
+                                    if (slotSection == null) continue;
+
+                                    Map<String, String> binds = new HashMap<>();
+                                    for (String key : slotSection.getKeys(false)) {
+                                        String cmd = slotSection.getString(key);
+                                        if (cmd != null && !cmd.isBlank()) {
+                                            binds.put(key.toUpperCase(Locale.ROOT), cmd);
+                                        }
+                                    }
+                                    keybindCommandMap.put(slot, binds);
+                                } catch (NumberFormatException ignored) {}
+                            }
+                        }
+                    }
+                    newPageSlotCommandCache.put(pageKey, slotCommandCache);
+                    newPageKeybindCommandMap.put(pageKey, keybindCommandMap);
                 }
             }
 
             this.commandType = newCommandType;
-            this.slotUsageMap = newSlotUsageMap;
-            this.slotCommandCache = newSlotCommandCache;
-            this.keybindCommandMap = newKeybindCommandMap;
+            this.pageSlotUsageMap.clear();
+            this.pageSlotUsageMap.putAll(newPageSlotUsageMap);
+            this.pageSlotCommandCache.clear();
+            this.pageSlotCommandCache.putAll(newPageSlotCommandCache);
+            this.pageKeybindCommandMap.clear();
+            this.pageKeybindCommandMap.putAll(newPageKeybindCommandMap);
 
             if (fakeItemListener != null) {
                 SchedulerUtil.run(this, () -> fakeItemListener.reload(getConfig()));
@@ -196,9 +294,13 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
     public void onInventoryDrag(InventoryDragEvent event) {
         if (event.getView().getType() != InventoryType.CRAFTING) return;
 
+        Player player = (Player) event.getWhoClicked();
+        String state = getPlayerState(player.getUniqueId());
+        Map<Integer, Boolean> usages = pageSlotUsageMap.getOrDefault(state, Collections.emptyMap());
+
         boolean hit = false;
         for (int s : event.getRawSlots()) {
-            if (s >= MIN_MENU_SLOT && s <= MAX_MENU_SLOT && slotUsageMap.getOrDefault(s, false)) {
+            if (s >= MIN_MENU_SLOT && s <= MAX_MENU_SLOT && usages.getOrDefault(s, false)) {
                 hit = true;
                 break;
             }
@@ -207,26 +309,21 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         if (!hit) return;
 
         event.setCancelled(true);
-        postUpdatePlayerView((Player) event.getWhoClicked());
-    }
-
-    @EventHandler
-    public void onRecipeClick(PlayerRecipeBookClickEvent event) {
-        Player player = event.getPlayer();
-        if (!isSelf2x2Crafting(player.getOpenInventory())) return;
-
-        event.setCancelled(true);
-        SchedulerUtil.runForPlayer(this, player, () -> player.openWorkbench(null, true));
         postUpdatePlayerView(player);
     }
 
     private String resolveCommand(InventoryClickEvent event, int slot) {
+        Player player = (Player) event.getWhoClicked();
+        String state = getPlayerState(player.getUniqueId());
+
         if ("crafting-slot".equals(commandType)) {
-            return slotCommandCache.get(slot);
+            Map<Integer, String> cache = pageSlotCommandCache.getOrDefault(state, Collections.emptyMap());
+            return cache.get(slot);
         }
 
         if ("keybind-commands".equals(commandType)) {
-            Map<String, String> slotCommands = keybindCommandMap.get(slot);
+            Map<Integer, Map<String, String>> rootBinds = pageKeybindCommandMap.getOrDefault(state, Collections.emptyMap());
+            Map<String, String> slotCommands = rootBinds.get(slot);
             if (slotCommands == null) return null;
 
             ClickType click = event.getClick();
@@ -255,8 +352,15 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
     private void dispatchCommand(Player player, String rawCommand) {
         String resolved = PlaceholderAPI.setPlaceholders(player, rawCommand);
         if (resolved.startsWith("*")) {
-            String consoleCmd = resolved.substring(1);
-            SchedulerUtil.run(this, () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), consoleCmd));
+            String sub = resolved.substring(1).trim();
+            if (sub.toLowerCase(Locale.ROOT).startsWith("csc_state")) {
+                String[] split = sub.split("\\s+");
+                if (split.length > 1) {
+                    setPlayerState(player.getUniqueId(), split[1].toUpperCase(Locale.ROOT));
+                }
+            } else {
+                SchedulerUtil.run(this, () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), sub));
+            }
         } else {
             Bukkit.dispatchCommand(player, resolved);
         }
@@ -272,13 +376,24 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
 
     @Override
     public ItemStack getFakeItem(int slot) {
+        return null;
+    }
+
+    public ItemStack getFakeItemForPlayer(Player player, int slot) {
         if (slot < MIN_MENU_SLOT || slot > MAX_MENU_SLOT) return null;
-        return com.gmail.bobason01.util.ItemBuilder.get(String.valueOf(slot));
+        String state = getPlayerState(player.getUniqueId());
+        return com.gmail.bobason01.util.ItemBuilder.get(state, String.valueOf(slot));
     }
 
     @Override
     public boolean isFakeSlot(int slot) {
-        return slotUsageMap.getOrDefault(slot, false);
+        return false;
+    }
+
+    public boolean isFakeSlotForPlayer(Player player, int slot) {
+        String state = getPlayerState(player.getUniqueId());
+        Map<Integer, Boolean> usages = pageSlotUsageMap.getOrDefault(state, Collections.emptyMap());
+        return usages.getOrDefault(slot, false);
     }
 
     @Override
@@ -287,7 +402,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         if (event.getView().getType() != InventoryType.CRAFTING) return false;
         int rawSlot = event.getRawSlot();
         if (rawSlot < MIN_MENU_SLOT || rawSlot > MAX_MENU_SLOT) return false;
-        return isFakeSlot(rawSlot);
+        return isFakeSlotForPlayer((Player) event.getWhoClicked(), rawSlot);
     }
 
     @Override
@@ -319,15 +434,15 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         public boolean onCommand(@Nonnull CommandSender sender, @Nonnull Command command,
                                  @Nonnull String label, @Nonnull String[] args) {
             if (!sender.hasPermission("csc.admin")) {
-                sendPrefixed(sender, Component.text("You do not have permission", NamedTextColor.RED));
+                sender.sendMessage(CraftSlotCommands.getInstance().getMessage("no-permission"));
                 return true;
             }
             if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
                 CraftSlotCommands.getInstance().reloadPlugin();
-                sendPrefixed(sender, Component.text("Reloaded successfully", NamedTextColor.GREEN));
+                sender.sendMessage(CraftSlotCommands.getInstance().getMessage("reload-success"));
                 return true;
             }
-            sendPrefixed(sender, Component.text("CraftSlotCommands", NamedTextColor.AQUA));
+            sender.sendMessage(CraftSlotCommands.getInstance().getMessage("prefix") + "CraftSlotCommands");
             return true;
         }
 
@@ -335,10 +450,6 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         public List<String> onTabComplete(@Nonnull CommandSender sender, @Nonnull Command command,
                                           @Nonnull String alias, String[] args) {
             return args.length == 1 ? List.of("reload") : Collections.emptyList();
-        }
-
-        private void sendPrefixed(CommandSender sender, Component msg) {
-            sender.sendMessage(Component.text("CSC4 ", NamedTextColor.GRAY).append(msg));
         }
     }
 }

@@ -7,7 +7,7 @@
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
         <module name="craftslotcommands3" />
-        <module name="CraftSlotCommands4" />
+        <module name="CraftSlotCommands5" />
         <module name="CraftSlotCommands3" />
       </profile>
     </annotationProcessing>
