@@ -17,22 +17,25 @@ import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.Damageable;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 public final class ItemBuilder {
 
     private static final Logger LOGGER = Bukkit.getLogger();
-    private static final String LOGGER_PREFIX = "ItemBuilder ";
-
     private static final ItemStack ERROR_ITEM;
     private static final Map<String, Map<String, ItemModel>> PAGE_CACHE = new ConcurrentHashMap<>();
     private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new HashMap<>();
-
     private static final ItemFlag[] ALL_FLAGS_ARRAY = ItemFlag.values();
     private static final Attribute[] ATTRIBUTES_ARRAY = Attribute.values();
+    private static final NamespacedKey MENU_ICON_KEY = new NamespacedKey("craftslotcommands5", "menu_icon");
 
     static {
         ItemStack item = new ItemStack(Material.BARRIER);
@@ -47,10 +50,8 @@ public final class ItemBuilder {
         for (Attribute attribute : ATTRIBUTES_ARRAY) {
             String key = attribute.name();
             String keyLower = key.toLowerCase(Locale.ROOT).replace("_", "");
-            NamespacedKey namespacedKey = NamespacedKey.minecraft("zero_" + keyLower);
-
             ZERO_MODIFIERS.put(key, new AttributeModifier(
-                    namespacedKey,
+                    NamespacedKey.minecraft("zero_" + keyLower),
                     0.0,
                     AttributeModifier.Operation.ADD_NUMBER,
                     EquipmentSlotGroup.ANY
@@ -68,9 +69,8 @@ public final class ItemBuilder {
         for (String key : root.getKeys(false)) {
             ConfigurationSection section = root.getConfigurationSection(key);
             if (section == null) continue;
-
             try {
-                ItemModel model = new ItemModel(
+                pageMap.put(key, new ItemModel(
                         section.getString("material"),
                         section.getString("name"),
                         section.getStringList("lore"),
@@ -81,10 +81,9 @@ public final class ItemBuilder {
                         section.getBoolean("strip-attributes"),
                         section.getBoolean("hide-all-flags"),
                         section.getStringList("hide-flags")
-                );
-                pageMap.put(key, model);
+                ));
             } catch (Exception e) {
-                LOGGER.warning(LOGGER_PREFIX + "Failed to load item model " + key + " on page " + pageState);
+                LOGGER.warning("ItemBuilder Failed to load item model " + key + " on page " + pageState);
             }
         }
     }
@@ -111,22 +110,15 @@ public final class ItemBuilder {
         if (model.name() != null) {
             meta.setDisplayName(parse(player, model.name()));
         }
-
         CraftSlotAPIProvider.get().applyModelIntegration(meta, model.model(), model.itemModel());
 
         if (!model.lore().isEmpty()) {
-            List<String> parsedLore = new ArrayList<>();
-            for (String line : model.lore()) {
-                parsedLore.add(parse(player, line));
-            }
-            meta.setLore(parsedLore);
+            List<String> lore = new ArrayList<>(model.lore().size());
+            for (String line : model.lore()) lore.add(parse(player, line));
+            meta.setLore(lore);
         }
-        if (model.unbreakable()) {
-            meta.setUnbreakable(true);
-        }
-        if (meta instanceof Damageable dmg && model.damage() > 0) {
-            dmg.setDamage(model.damage());
-        }
+        if (model.unbreakable()) meta.setUnbreakable(true);
+        if (meta instanceof Damageable dmg && model.damage() > 0) dmg.setDamage(model.damage());
 
         if (model.hideAllFlags()) {
             meta.addItemFlags(ALL_FLAGS_ARRAY);
@@ -134,7 +126,8 @@ public final class ItemBuilder {
             for (String flagName : model.hideFlags()) {
                 try {
                     meta.addItemFlags(ItemFlag.valueOf(flagName.trim().toUpperCase(Locale.ROOT)));
-                } catch (IllegalArgumentException ignored) {}
+                } catch (IllegalArgumentException ignored) {
+                }
             }
         }
 
@@ -147,24 +140,42 @@ public final class ItemBuilder {
         }
 
         item.setItemMeta(meta);
+        markMenuIcon(item);
         return item;
+    }
+
+    public static boolean isMenuIcon(ItemStack item) {
+        if (item == null || item.getType().isAir() || !item.hasItemMeta()) return false;
+        try {
+            return item.getItemMeta().getPersistentDataContainer()
+                    .has(MENU_ICON_KEY, PersistentDataType.BYTE);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void markMenuIcon(ItemStack item) {
+        try {
+            ItemMeta meta = item.getItemMeta();
+            if (meta == null) return;
+            meta.getPersistentDataContainer().set(MENU_ICON_KEY, PersistentDataType.BYTE, (byte) 1);
+            item.setItemMeta(meta);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static String parse(Player player, String text) {
         if (text == null || text.isEmpty()) return "";
-
         String parsed = text;
-
         if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
             parsed = PlaceholderAPI.setPlaceholders(player, parsed);
         }
-
         try {
             parsed = LegacyComponentSerializer.legacySection().serialize(
                     MiniMessage.miniMessage().deserialize(parsed)
             );
-        } catch (Throwable ignored) {}
-
+        } catch (Throwable ignored) {
+        }
         return ChatColor.translateAlternateColorCodes('&', parsed);
     }
 }

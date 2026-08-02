@@ -16,5 +16,4 @@ public interface CraftSlotAPI {
     void forceUpdatePlayerView(Player player);
 
     void applyModelIntegration(ItemMeta meta, int customModelData, String itemModelKey);
-
 }

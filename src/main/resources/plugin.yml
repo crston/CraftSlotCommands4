@@ -4,12 +4,13 @@ version: 1000.0
 api-version: 1.13
 author: crston
 depend: [packetevents]
+softdepend: [PlaceholderAPI]
 commands:
   craftslotcommands:
     description: Admin command for CraftSlotCommands.
     aliases: [csc]
 permissions:
   csc.admin:
-    description: Access to the CraftSlotCommands command.
+    description: Access to the CraftSlotCommands admin command.
     default: op
 folia-supported: true

@@ -1,28 +1,14 @@
 # Craft Slot Commands 5 - Multi-Page RPG Navigation Configuration
-# Craft Slot Commands 5 - 멀티 페이지 RPG 내비게이션 설정
+# 제작 슬롯(0–4) 메뉴만 지원합니다. 방어구 슬롯 메뉴는 제거되었습니다.
 
 # crafting-slot or keybind-commands
-# 제작 슬롯 클릭 방식 또는 키바인딩 방식 선택
 cmd-type: crafting-slot
 
-# Set whether to place custom items in the crafting slots
-# 제작 슬롯 공간에 커스텀 메뉴 아이템을 배치할지 여부 설정
+# 제작 슬롯에 커스텀 메뉴 아이템을 배치할지 여부
 items-enabled: true
 
-# When true, armor slots (use-slot 5-8) become packet-only menus.
-# Server armor for those slots is cleared and vanilla equip is blocked.
-# 5=helmet, 6=chestplate, 7=leggings, 8=boots
-# true 이면 방어구 슬롯(use-slot 5-8)을 패킷 전용 메뉴로 사용합니다.
-armor-slots-as-menu: false
-
-# Multi-Page Layout Layers Configuration
-# 멀티 페이지 레이아웃 레이어 설정
 menu-pages:
 
-  # ----------------------------------------------------
-  # [MAIN LAYER] - Default view when opening inventory
-  # [메인 레이어] - 인벤토리를 열었을 때 최초로 보이는 기본 화면
-  # ----------------------------------------------------
   MAIN:
     use-slot:
       0: true
@@ -30,12 +16,6 @@ menu-pages:
       2: true
       3: true
       4: true
-      # Requires armor-slots-as-menu: true
-      # armor-slots-as-menu: true 필요
-      5: true
-      6: true
-      7: true
-      8: true
     slot-item:
       0:
         material: GREEN_STAINED_GLASS_PANE
@@ -57,40 +37,12 @@ menu-pages:
         material: GREEN_STAINED_GLASS_PANE
         name: "&f&l[ Settings ]"
         model: 179
-      5:
-        material: GRAY_STAINED_GLASS_PANE
-        name: "&f&l[ Helmet Menu ]"
-        model: 195
-        strip-attributes: true
-        hide-all-flags: true
-      6:
-        material: GRAY_STAINED_GLASS_PANE
-        name: "&f&l[ Chest Menu ]"
-        model: 196
-        strip-attributes: true
-        hide-all-flags: true
-      7:
-        material: GRAY_STAINED_GLASS_PANE
-        name: "&f&l[ Legs Menu ]"
-        model: 197
-        strip-attributes: true
-        hide-all-flags: true
-      8:
-        material: GRAY_STAINED_GLASS_PANE
-        name: "&f&l[ Boots Menu ]"
-        model: 198
-        strip-attributes: true
-        hide-all-flags: true
     crafting-slot:
       0: "gui open craftmenu"
       1: "*csc_state STAT_PAGE"
       2: "*csc_state MOVE_PAGE"
       3: "bank open"
       4: "*csc_state SETTING_PAGE"
-      5: "say Helmet slot menu"
-      6: "say Chest slot menu"
-      7: "say Legs slot menu"
-      8: "say Boots slot menu"
     keybind-commands:
       0:
         1: "/say Pressed 1 on slot 0"
@@ -108,70 +60,18 @@ menu-pages:
         RIGHT: "/say Right click slot 0"
         DROP: "/say Dropped item from slot 0"
       1:
-        1: "/say Pressed 1 on slot 1"
-        2: "/say Pressed 2 on slot 1"
-        3: "/say Pressed 3 on slot 1"
-        4: "/say Pressed 4 on slot 1"
-        5: "/say Pressed 5 on slot 1"
-        6: "/say Pressed 6 on slot 1"
-        7: "/say Pressed 7 on slot 1"
-        8: "/say Pressed 8 on slot 1"
-        9: "/say Pressed 9 on slot 1"
-        Q: "/say You pressed Q on slot 1"
-        F: "/say Swapped hand in slot 1"
         LEFT: "/say Left click slot 1"
         RIGHT: "/say Right click slot 1"
-        DROP: "/say Dropped item from slot 1"
       2:
-        1: "/say Pressed 1 on slot 2"
-        2: "/say Pressed 2 on slot 2"
-        3: "/say Pressed 3 on slot 2"
-        4: "/say Pressed 4 on slot 2"
-        5: "/say Pressed 5 on slot 2"
-        6: "/say Pressed 6 on slot 2"
-        7: "/say Pressed 7 on slot 2"
-        8: "/say Pressed 8 on slot 2"
-        9: "/say Pressed 9 on slot 2"
-        Q: "/say You pressed Q on slot 2"
-        F: "/say Swapped hand in slot 2"
         LEFT: "/say Left click slot 2"
         RIGHT: "/say Right click slot 2"
-        DROP: "/say Dropped item from slot 2"
       3:
-        1: "/say Pressed 1 on slot 3"
-        2: "/say Pressed 2 on slot 3"
-        3: "/say Pressed 3 on slot 3"
-        4: "/say Pressed 4 on slot 3"
-        5: "/say Pressed 5 on slot 3"
-        6: "/say Pressed 6 on slot 3"
-        7: "/say Pressed 7 on slot 3"
-        8: "/say Pressed 8 on slot 3"
-        9: "/say Pressed 9 on slot 3"
-        Q: "/say You pressed Q on slot 3"
-        F: "/say Swapped hand in slot 3"
         LEFT: "/say Left click slot 3"
         RIGHT: "/say Right click slot 3"
-        DROP: "/say Dropped item from slot 3"
       4:
-        1: "/say Pressed 1 on slot 4"
-        2: "/say Pressed 2 on slot 4"
-        3: "/say Pressed 3 on slot 4"
-        4: "/say Pressed 4 on slot 4"
-        5: "/say Pressed 5 on slot 4"
-        6: "/say Pressed 6 on slot 4"
-        7: "/say Pressed 7 on slot 4"
-        8: "/say Pressed 8 on slot 4"
-        9: "/say Pressed 9 on slot 4"
-        Q: "/say You pressed Q on slot 4"
-        F: "/say Swapped hand in slot 4"
         LEFT: "/say Left click slot 4"
         RIGHT: "/say Right click slot 4"
-        DROP: "/say Dropped item from slot 4"
 
-  # ----------------------------------------------------
-  # [STAT LAYER] - Secondary page for player stats and skills
-  # [스텟 레이어] - 스텟 버튼 클릭 시 활성화되는 서브 화면
-  # ----------------------------------------------------
   STAT_PAGE:
     use-slot:
       0: true
@@ -207,10 +107,6 @@ menu-pages:
       3: "mastery open"
       4: "skills open"
 
-  # ----------------------------------------------------
-  # [MOVE LAYER] - Secondary page for teleport destinations
-  # [이동 레이어] - 이동 버튼 클릭 시 활성화되는 서브 화면
-  # ----------------------------------------------------
   MOVE_PAGE:
     use-slot:
       0: true
@@ -246,10 +142,6 @@ menu-pages:
       3: "wild"
       4: "warp field"
 
-  # ----------------------------------------------------
-  # [SETTING LAYER] - Secondary page for options and features
-  # [설정 레이어] - 설정 버튼 클릭 시 활성화되는 서브 화면
-  # ----------------------------------------------------
   SETTING_PAGE:
     use-slot:
       0: true
@@ -284,3 +176,8 @@ menu-pages:
       2: "options detail"
       3: "island config"
       4: "cosmetics"
+
+messages:
+  prefix: "&7CSC5 "
+  no-permission: "&cYou do not have permission"
+  reload-success: "&aConfiguration files reloaded successfully"
