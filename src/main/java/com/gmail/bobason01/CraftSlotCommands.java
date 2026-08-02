@@ -188,6 +188,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
             Map<String, Map<Integer, Map<String, String>>> newPageKeybindCommandMap = new HashMap<>();
 
             String newCommandType = getConfig().getString("cmd-type", "crafting-slot").toLowerCase(Locale.ROOT);
+            boolean armorSlotsAsMenu = getConfig().getBoolean("armor-slots-as-menu", false);
 
             if (rootPages != null) {
                 for (String pageKey : rootPages.getKeys(false)) {
@@ -199,7 +200,11 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
                     if (useSlotSec != null) {
                         for (String key : useSlotSec.getKeys(false)) {
                             try {
-                                slotUsageMap.put(Integer.parseInt(key), useSlotSec.getBoolean(key));
+                                int slot = Integer.parseInt(key);
+                                if (!useSlotSec.getBoolean(key)) continue;
+                                if (MenuSlots.isArmorSlot(slot) && !armorSlotsAsMenu) continue;
+                                if (!MenuSlots.isMenuRange(slot)) continue;
+                                slotUsageMap.put(slot, true);
                             } catch (NumberFormatException ignored) {
                             }
                         }

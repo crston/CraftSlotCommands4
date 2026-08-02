@@ -190,42 +190,101 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     public void reload(FileConfiguration config) {
+        boolean wasArmorMenu = this.armorSlotsAsMenu;
         this.itemsEnabled = config.getBoolean("items-enabled", true);
         this.armorSlotsAsMenu = config.getBoolean("armor-slots-as-menu", false);
         pageFixedUsageArray.clear();
 
         ConfigurationSection rootPages = config.getConfigurationSection("menu-pages");
-        if (rootPages == null) return;
+        if (rootPages != null) {
+            for (String pageKey : rootPages.getKeys(false)) {
+                ConfigurationSection pageSec = rootPages.getConfigurationSection(pageKey);
+                if (pageSec == null) continue;
 
-        for (String pageKey : rootPages.getKeys(false)) {
-            ConfigurationSection pageSec = rootPages.getConfigurationSection(pageKey);
-            if (pageSec == null) continue;
+                boolean[] fixedUsageArray = new boolean[MenuSlots.SLOT_COUNT];
 
-            boolean[] fixedUsageArray = new boolean[MenuSlots.SLOT_COUNT];
-
-            ConfigurationSection useSlotSection = pageSec.getConfigurationSection("use-slot");
-            if (useSlotSection != null) {
-                for (String key : useSlotSection.getKeys(false)) {
-                    try {
-                        int slot = Integer.parseInt(key);
-                        if (!useSlotSection.getBoolean(key)) continue;
-                        if (MenuSlots.isCraftSlot(slot)) {
-                            fixedUsageArray[slot] = true;
-                        } else if (MenuSlots.isArmorSlot(slot) && armorSlotsAsMenu) {
-                            fixedUsageArray[slot] = true;
-                        }
-                    } catch (NumberFormatException ignored) {}
+                ConfigurationSection useSlotSection = pageSec.getConfigurationSection("use-slot");
+                if (useSlotSection != null) {
+                    for (String key : useSlotSection.getKeys(false)) {
+                        try {
+                            int slot = Integer.parseInt(key);
+                            if (!useSlotSection.getBoolean(key)) continue;
+                            if (MenuSlots.isCraftSlot(slot)) {
+                                fixedUsageArray[slot] = true;
+                            } else if (MenuSlots.isArmorSlot(slot) && armorSlotsAsMenu) {
+                                fixedUsageArray[slot] = true;
+                            }
+                        } catch (NumberFormatException ignored) {}
+                    }
                 }
-            }
 
-            pageFixedUsageArray.put(pageKey, fixedUsageArray);
+                pageFixedUsageArray.put(pageKey, fixedUsageArray);
+            }
         }
 
         for (Player player : plugin.getServer().getOnlinePlayers()) {
             if (armorSlotsAsMenu) {
                 evacuateMenuArmor(player);
+                forceClientRefresh(player);
+            } else if (wasArmorMenu) {
+                restoreVanillaArmorView(player);
+                forceClientRefresh(player);
+                SchedulerUtil.runForPlayerLater(plugin, player, () -> {
+                    if (!player.isOnline() || armorSlotsAsMenu) return;
+                    restoreVanillaArmorView(player);
+                    forceClientRefresh(player);
+                }, 2L);
+            } else {
+                forceClientRefresh(player);
             }
-            forceClientRefresh(player);
+        }
+    }
+
+    /**
+     * Clears client-side armor-menu fakes and resyncs real worn armor (or empty) to inventory + model.
+     */
+    private void restoreVanillaArmorView(Player player) {
+        if (!player.isOnline()) return;
+
+        PlayerInventory inv = player.getInventory();
+        org.bukkit.inventory.ItemStack helmet = inv.getHelmet();
+        org.bukkit.inventory.ItemStack chest = inv.getChestplate();
+        org.bukkit.inventory.ItemStack legs = inv.getLeggings();
+        org.bukkit.inventory.ItemStack boots = inv.getBoots();
+
+        sendQuiet(player, new WrapperPlayServerSetSlot(0, 1, 5, safeConvert(safeRef(helmet))));
+        sendQuiet(player, new WrapperPlayServerSetSlot(0, 1, 6, safeConvert(safeRef(chest))));
+        sendQuiet(player, new WrapperPlayServerSetSlot(0, 1, 7, safeConvert(safeRef(legs))));
+        sendQuiet(player, new WrapperPlayServerSetSlot(0, 1, 8, safeConvert(safeRef(boots))));
+
+        List<Equipment> equipment = List.of(
+                new Equipment(EquipmentSlot.HELMET, safeConvert(safeRef(helmet))),
+                new Equipment(EquipmentSlot.CHEST_PLATE, safeConvert(safeRef(chest))),
+                new Equipment(EquipmentSlot.LEGGINGS, safeConvert(safeRef(legs))),
+                new Equipment(EquipmentSlot.BOOTS, safeConvert(safeRef(boots)))
+        );
+        WrapperPlayServerEntityEquipment equipPacket =
+                new WrapperPlayServerEntityEquipment(player.getEntityId(), equipment);
+
+        Map<org.bukkit.inventory.EquipmentSlot, org.bukkit.inventory.ItemStack> paperChanges = new HashMap<>(4);
+        paperChanges.put(org.bukkit.inventory.EquipmentSlot.HEAD, safeRef(helmet));
+        paperChanges.put(org.bukkit.inventory.EquipmentSlot.CHEST, safeRef(chest));
+        paperChanges.put(org.bukkit.inventory.EquipmentSlot.LEGS, safeRef(legs));
+        paperChanges.put(org.bukkit.inventory.EquipmentSlot.FEET, safeRef(boots));
+
+        sendQuiet(player, equipPacket);
+        sendPaperEquipmentChange(player, paperChanges);
+
+        for (Player viewer : player.getWorld().getPlayers()) {
+            if (viewer.getUniqueId().equals(player.getUniqueId())) continue;
+            if (!viewer.canSee(player)) continue;
+            sendQuiet(viewer, equipPacket);
+            sendPaperEquipmentChange(viewer, player, paperChanges);
+        }
+
+        try {
+            player.updateInventory();
+        } catch (Throwable ignored) {
         }
     }
 
