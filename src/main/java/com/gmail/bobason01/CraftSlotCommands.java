@@ -1,27 +1,37 @@
 package com.gmail.bobason01;
 
-import com.comphenix.protocol.PacketType;
-import com.comphenix.protocol.ProtocolLibrary;
-import com.comphenix.protocol.events.ListenerPriority;
-import com.comphenix.protocol.events.PacketAdapter;
-import com.comphenix.protocol.events.PacketEvent;
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.event.PacketListenerAbstract;
+import com.github.retrooper.packetevents.event.PacketListenerPriority;
+import com.github.retrooper.packetevents.event.PacketReceiveEvent;
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.gmail.bobason01.api.CraftSlotAPI;
 import com.gmail.bobason01.api.CraftSlotAPIProvider;
 import com.gmail.bobason01.listener.CraftSlotFakeItemListener;
 import com.gmail.bobason01.util.BedrockDetector;
-import com.gmail.bobason01.util.UpdateTaskPool;
-import com.gmail.bobason01.util.SchedulerUtil;
 import com.gmail.bobason01.util.InventoryUtil;
+import com.gmail.bobason01.util.MenuSlots;
+import com.gmail.bobason01.util.SchedulerUtil;
+import com.gmail.bobason01.util.UpdateTaskPool;
 import me.clip.placeholderapi.PlaceholderAPI;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.NamespacedKey;
-import org.bukkit.command.*;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.command.PluginCommand;
+import org.bukkit.command.TabCompleter;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.inventory.*;
+import org.bukkit.event.inventory.ClickType;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
@@ -29,13 +39,16 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import javax.annotation.Nonnull;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class CraftSlotCommands extends JavaPlugin implements Listener, CraftSlotAPI {
 
-    private static final int MIN_MENU_SLOT = 0;
-    private static final int MAX_MENU_SLOT = 4;
     private static final long IGNORE_CLICK_MS = 300L;
 
     private static CraftSlotCommands instance;
@@ -59,8 +72,8 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         instance = this;
         CraftSlotAPIProvider.register(this);
 
-        if (isPluginMissing("ProtocolLib")) {
-            getLogger().severe("Required dependencies missing");
+        if (isPluginMissing("packetevents")) {
+            getLogger().severe("PacketEvents plugin is missing");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -70,7 +83,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
 
         registerCommand();
         registerEvents();
-        registerProtocolLib();
+        registerPacketEvents();
         reloadPlugin();
     }
 
@@ -79,8 +92,8 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         UpdateTaskPool.shutdown();
     }
 
-    private boolean isPluginMissing(String plugin) {
-        return Bukkit.getPluginManager().getPlugin(plugin) == null;
+    private boolean isPluginMissing(String pluginName) {
+        return Bukkit.getPluginManager().getPlugin(pluginName) == null;
     }
 
     private void registerCommand() {
@@ -98,40 +111,28 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         Bukkit.getPluginManager().registerEvents(fakeItemListener, this);
     }
 
-    private void registerProtocolLib() {
-        // 최적화 포인트: 클라이언트의 레시피 북 UI 개폐 동작 설정 및 레시피 자동 완성 패킷 필터를 완전히 차단하여
-        // 바닐라 레시피 기능의 연산 낭비를 100% 동기적으로 원천 봉쇄합니다.
-        ProtocolLibrary.getProtocolManager().addPacketListener(
-                new PacketAdapter(this, ListenerPriority.NORMAL, PacketType.Play.Client.RECIPE_SETTINGS) {
-                    @Override
-                    public void onPacketReceiving(PacketEvent event) {
-                        Player player = event.getPlayer();
+    private void registerPacketEvents() {
+        PacketEvents.getAPI().getEventManager().registerListener(new PacketListenerAbstract(PacketListenerPriority.NORMAL) {
+            @Override
+            public void onPacketReceive(PacketReceiveEvent event) {
+                PacketTypeCommon type = event.getPacketType();
+                if (type == PacketType.Play.Client.RECIPE_BOOK_DATA || type == PacketType.Play.Client.CRAFT_RECIPE_REQUEST) {
+                    Object playerObj = event.getPlayer();
+                    if (playerObj instanceof Player) {
+                        Player player = (Player) playerObj;
                         if (InventoryUtil.isSelf2x2Crafting(player.getOpenInventory())) {
                             event.setCancelled(true);
-                            SchedulerUtil.run(plugin, () -> postUpdatePlayerView(player));
+                            SchedulerUtil.run(instance, () -> postUpdatePlayerView(player));
                         }
                     }
                 }
-        );
-
-        ProtocolLibrary.getProtocolManager().addPacketListener(
-                new PacketAdapter(this, ListenerPriority.NORMAL, PacketType.Play.Client.AUTO_RECIPE) {
-                    @Override
-                    public void onPacketReceiving(PacketEvent event) {
-                        Player player = event.getPlayer();
-                        if (InventoryUtil.isSelf2x2Crafting(player.getOpenInventory())) {
-                            event.setCancelled(true);
-                            SchedulerUtil.run(plugin, () -> postUpdatePlayerView(player));
-                        }
-                    }
-                }
-        );
+            }
+        });
     }
 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        playerMenuState.put(player.getUniqueId(), "MAIN");
+        playerMenuState.put(event.getPlayer().getUniqueId(), "MAIN");
     }
 
     @EventHandler
@@ -148,20 +149,20 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
     public void setPlayerState(UUID uuid, String state) {
         playerMenuState.put(uuid, state);
         Player player = Bukkit.getPlayer(uuid);
-        if (player != null && player.isOnline()) {
-            if (fakeItemListener != null) {
-                fakeItemListener.forceClientRefresh(player);
-            }
+        if (player != null && player.isOnline() && fakeItemListener != null) {
+            fakeItemListener.forceClientRefresh(player);
         }
     }
 
     public String getMessage(String key) {
-        String msg;
-        switch (key) {
-            case "prefix": msg = "&7CSC5 "; break;
-            case "no-permission": msg = "&cYou do not have permission to execute this command."; break;
-            case "reload-success": msg = "&aConfiguration files reloaded successfully."; break;
-            default: msg = key; break;
+        String msg = getConfig().getString("messages." + key);
+        if (msg == null) {
+            switch (key) {
+                case "prefix": msg = "&7CSC5 "; break;
+                case "no-permission": msg = "&cYou do not have permission"; break;
+                case "reload-success": msg = "&aConfiguration files reloaded successfully"; break;
+                default: msg = key; break;
+            }
         }
         return ChatColor.translateAlternateColorCodes('&', msg);
     }
@@ -199,7 +200,8 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
                         for (String key : useSlotSec.getKeys(false)) {
                             try {
                                 slotUsageMap.put(Integer.parseInt(key), useSlotSec.getBoolean(key));
-                            } catch (NumberFormatException ignored) {}
+                            } catch (NumberFormatException ignored) {
+                            }
                         }
                     }
                     newPageSlotUsageMap.put(pageKey, slotUsageMap);
@@ -215,7 +217,8 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
                                     int slot = Integer.parseInt(key);
                                     String cmd = sec.getString(key, "").trim();
                                     if (!cmd.isEmpty()) slotCommandCache.put(slot, cmd);
-                                } catch (NumberFormatException ignored) {}
+                                } catch (NumberFormatException ignored) {
+                                }
                             }
                         }
                     } else if ("keybind-commands".equals(newCommandType)) {
@@ -235,7 +238,8 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
                                         }
                                     }
                                     keybindCommandMap.put(slot, binds);
-                                } catch (NumberFormatException ignored) {}
+                                } catch (NumberFormatException ignored) {
+                                }
                             }
                         }
                     }
@@ -270,22 +274,25 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         }
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = org.bukkit.event.EventPriority.HIGH, ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
         if (!isMenuClick(event)) return;
 
         Player player = (Player) event.getWhoClicked();
+        event.setCancelled(true);
 
         if (isBedrockPlayer(player)) {
             long closed = bedrockCloseTimestamps.getOrDefault(player.getUniqueId(), 0L);
-            if (System.currentTimeMillis() - closed < IGNORE_CLICK_MS) return;
+            if (System.currentTimeMillis() - closed < IGNORE_CLICK_MS) {
+                postUpdatePlayerView(player);
+                return;
+            }
         }
 
         String command = resolveCommand(event, event.getRawSlot());
-        if (command == null || command.isBlank()) return;
-
-        event.setCancelled(true);
-        SchedulerUtil.runForPlayer(this, player, () -> dispatchCommand(player, command));
+        if (command != null && !command.isBlank()) {
+            SchedulerUtil.runForPlayer(this, player, () -> dispatchCommand(player, command));
+        }
 
         postUpdatePlayerView(player);
     }
@@ -300,7 +307,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
 
         boolean hit = false;
         for (int s : event.getRawSlots()) {
-            if (s >= MIN_MENU_SLOT && s <= MAX_MENU_SLOT && usages.getOrDefault(s, false)) {
+            if (MenuSlots.isMenuRange(s) && usages.getOrDefault(s, false)) {
                 hit = true;
                 break;
             }
@@ -380,9 +387,9 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
     }
 
     public ItemStack getFakeItemForPlayer(Player player, int slot) {
-        if (slot < MIN_MENU_SLOT || slot > MAX_MENU_SLOT) return null;
+        if (!MenuSlots.isMenuRange(slot)) return null;
         String state = getPlayerState(player.getUniqueId());
-        return com.gmail.bobason01.util.ItemBuilder.get(state, String.valueOf(slot));
+        return com.gmail.bobason01.util.ItemBuilder.get(player, state, String.valueOf(slot));
     }
 
     @Override
@@ -391,6 +398,9 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
     }
 
     public boolean isFakeSlotForPlayer(Player player, int slot) {
+        if (MenuSlots.isArmorSlot(slot)) {
+            if (fakeItemListener == null || !fakeItemListener.isArmorSlotsAsMenu()) return false;
+        }
         String state = getPlayerState(player.getUniqueId());
         Map<Integer, Boolean> usages = pageSlotUsageMap.getOrDefault(state, Collections.emptyMap());
         return usages.getOrDefault(slot, false);
@@ -401,7 +411,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         if (event == null) return false;
         if (event.getView().getType() != InventoryType.CRAFTING) return false;
         int rawSlot = event.getRawSlot();
-        if (rawSlot < MIN_MENU_SLOT || rawSlot > MAX_MENU_SLOT) return false;
+        if (!MenuSlots.isMenuRange(rawSlot)) return false;
         return isFakeSlotForPlayer((Player) event.getWhoClicked(), rawSlot);
     }
 
@@ -425,7 +435,8 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
                 } else {
                     meta.setItemModel(NamespacedKey.minecraft(itemModelKey));
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
     }
 

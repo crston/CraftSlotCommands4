@@ -9,6 +9,12 @@ cmd-type: crafting-slot
 # 제작 슬롯 공간에 커스텀 메뉴 아이템을 배치할지 여부 설정
 items-enabled: true
 
+# When true, armor slots (use-slot 5-8) become packet-only menus.
+# Server armor for those slots is cleared and vanilla equip is blocked.
+# 5=helmet, 6=chestplate, 7=leggings, 8=boots
+# true 이면 방어구 슬롯(use-slot 5-8)을 패킷 전용 메뉴로 사용합니다.
+armor-slots-as-menu: false
+
 # Multi-Page Layout Layers Configuration
 # 멀티 페이지 레이아웃 레이어 설정
 menu-pages:
@@ -24,6 +30,12 @@ menu-pages:
       2: true
       3: true
       4: true
+      # Requires armor-slots-as-menu: true
+      # armor-slots-as-menu: true 필요
+      5: true
+      6: true
+      7: true
+      8: true
     slot-item:
       0:
         material: GREEN_STAINED_GLASS_PANE
@@ -45,12 +57,40 @@ menu-pages:
         material: GREEN_STAINED_GLASS_PANE
         name: "&f&l[ Settings ]"
         model: 179
+      5:
+        material: GRAY_STAINED_GLASS_PANE
+        name: "&f&l[ Helmet Menu ]"
+        model: 195
+        strip-attributes: true
+        hide-all-flags: true
+      6:
+        material: GRAY_STAINED_GLASS_PANE
+        name: "&f&l[ Chest Menu ]"
+        model: 196
+        strip-attributes: true
+        hide-all-flags: true
+      7:
+        material: GRAY_STAINED_GLASS_PANE
+        name: "&f&l[ Legs Menu ]"
+        model: 197
+        strip-attributes: true
+        hide-all-flags: true
+      8:
+        material: GRAY_STAINED_GLASS_PANE
+        name: "&f&l[ Boots Menu ]"
+        model: 198
+        strip-attributes: true
+        hide-all-flags: true
     crafting-slot:
       0: "gui open craftmenu"
       1: "*csc_state STAT_PAGE"
       2: "*csc_state MOVE_PAGE"
       3: "bank open"
       4: "*csc_state SETTING_PAGE"
+      5: "say Helmet slot menu"
+      6: "say Chest slot menu"
+      7: "say Legs slot menu"
+      8: "say Boots slot menu"
     keybind-commands:
       0:
         1: "/say Pressed 1 on slot 0"
