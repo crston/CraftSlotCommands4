@@ -6,6 +6,9 @@ import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.event.PacketSendEvent;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetSlot;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerWindowItems;
 import com.gmail.bobason01.CraftSlotCommands;
@@ -82,6 +85,11 @@ public class CraftSlotFakeItemListener implements Listener {
                 boolean[] usages = usagesFor(player);
                 if (usages == null || !hasArmorMenu(usages)) return;
 
+                if (event.getPacketType() == PacketType.Play.Server.ENTITY_EQUIPMENT) {
+                    forceEmptyMenuArmorEquipment(event, player);
+                    return;
+                }
+
                 if (event.getPacketType() == PacketType.Play.Server.WINDOW_ITEMS) {
                     patchWindowItemsPacket(event, player, usages);
                     return;
@@ -92,6 +100,61 @@ public class CraftSlotFakeItemListener implements Listener {
                 }
             }
         });
+    }
+
+    /**
+     * Keep menu items out of the worn model. Inventory GUI is handled by WindowItems/SetSlot.
+     * Applies to packets about any online player that has armor-menu slots enabled.
+     */
+    private void forceEmptyMenuArmorEquipment(PacketSendEvent event, Player receiver) {
+        WrapperPlayServerEntityEquipment wrapper = new WrapperPlayServerEntityEquipment(event);
+        int entityId = wrapper.getEntityId();
+
+        Player target;
+        if (entityId == receiver.getEntityId()) {
+            target = receiver;
+        } else {
+            target = null;
+            for (Player online : plugin.getServer().getOnlinePlayers()) {
+                if (online.getEntityId() == entityId) {
+                    target = online;
+                    break;
+                }
+            }
+            if (target == null) return;
+        }
+
+        boolean[] usages = usagesFor(target);
+        if (!hasArmorMenu(usages)) return;
+
+        List<Equipment> equipment = wrapper.getEquipment();
+        if (equipment == null || equipment.isEmpty()) return;
+
+        boolean changed = false;
+        List<Equipment> patched = new ArrayList<>(equipment.size());
+        for (Equipment entry : equipment) {
+            int raw = rawSlotForEquipment(entry.getSlot());
+            if (raw >= 0 && isArmorMenuSlot(usages, raw)) {
+                patched.add(new Equipment(entry.getSlot(), ItemStack.EMPTY));
+                changed = true;
+            } else {
+                patched.add(entry);
+            }
+        }
+        if (!changed) return;
+        wrapper.setEquipment(patched);
+        event.markForReEncode(true);
+    }
+
+    private static int rawSlotForEquipment(EquipmentSlot slot) {
+        if (slot == null) return -1;
+        return switch (slot) {
+            case HELMET -> 5;
+            case CHEST_PLATE -> 6;
+            case LEGGINGS -> 7;
+            case BOOTS -> 8;
+            default -> -1;
+        };
     }
 
     private void patchWindowItemsPacket(PacketSendEvent event, Player player, boolean[] usages) {
@@ -371,17 +434,98 @@ public class CraftSlotFakeItemListener implements Listener {
             return;
         }
 
-        // Reinforce armor menu slots — server SET_SLOT(air) after evacuate can race WindowItems.
         if (hasArmorMenu(usages)) {
-            for (int raw = MenuSlots.ARMOR_MIN; raw <= MenuSlots.ARMOR_MAX; raw++) {
-                if (!isArmorMenuSlot(usages, raw)) continue;
-                ItemStack peItem = safeConvert(menuItem(player, state, raw));
-                WrapperPlayServerSetSlot setSlot = new WrapperPlayServerSetSlot(0, 1, raw, peItem);
-                try {
-                    PacketEvents.getAPI().getPlayerManager().sendPacket(player, setSlot);
-                } catch (Exception e) {
-                    logger.log(Level.SEVERE, "Failed to send armor menu SetSlot via PacketEvents", e);
-                }
+            sendArmorMenuSlots(player, state, usages);
+            // Hide body/head render. Do not re-SetSlot afterwards — that puts the item back on the model.
+            hideWornArmorModel(player, usages);
+            SchedulerUtil.runForPlayerLater(plugin, player, () -> {
+                if (!player.isOnline()) return;
+                boolean[] latest = usagesFor(player);
+                if (!hasArmorMenu(latest)) return;
+                hideWornArmorModel(player, latest);
+            }, 1L);
+        }
+    }
+
+    private void sendArmorMenuSlots(Player player, String state, boolean[] usages) {
+        for (int raw = MenuSlots.ARMOR_MIN; raw <= MenuSlots.ARMOR_MAX; raw++) {
+            if (!isArmorMenuSlot(usages, raw)) continue;
+            ItemStack peItem = safeConvert(menuItem(player, state, raw));
+            WrapperPlayServerSetSlot setSlot = new WrapperPlayServerSetSlot(0, 1, raw, peItem);
+            sendQuiet(player, setSlot);
+        }
+    }
+
+    private void hideWornArmorModel(Player player, boolean[] usages) {
+        List<Equipment> equipment = new ArrayList<>(4);
+        Map<org.bukkit.inventory.EquipmentSlot, org.bukkit.inventory.ItemStack> paperChanges = new HashMap<>(4);
+
+        for (int raw = MenuSlots.ARMOR_MIN; raw <= MenuSlots.ARMOR_MAX; raw++) {
+            if (!isArmorMenuSlot(usages, raw)) continue;
+            EquipmentSlot slot = MenuSlots.toPacketEquipmentSlot(raw);
+            if (slot != null) {
+                equipment.add(new Equipment(slot, ItemStack.EMPTY));
+            }
+            org.bukkit.inventory.EquipmentSlot bukkitSlot = switch (raw) {
+                case 5 -> org.bukkit.inventory.EquipmentSlot.HEAD;
+                case 6 -> org.bukkit.inventory.EquipmentSlot.CHEST;
+                case 7 -> org.bukkit.inventory.EquipmentSlot.LEGS;
+                case 8 -> org.bukkit.inventory.EquipmentSlot.FEET;
+                default -> null;
+            };
+            if (bukkitSlot != null) {
+                paperChanges.put(bukkitSlot, AIR);
+            }
+        }
+        if (equipment.isEmpty()) return;
+
+        // Paper API: fake equipment for viewers without touching inventory contents.
+        sendPaperEquipmentChange(player, paperChanges);
+
+        WrapperPlayServerEntityEquipment packet =
+                new WrapperPlayServerEntityEquipment(player.getEntityId(), equipment);
+
+        sendQuiet(player, packet);
+
+        for (Player viewer : player.getWorld().getPlayers()) {
+            if (viewer.getUniqueId().equals(player.getUniqueId())) continue;
+            if (!viewer.canSee(player)) continue;
+            sendPaperEquipmentChange(viewer, player, paperChanges);
+            sendQuiet(viewer, packet);
+        }
+    }
+
+    private void sendPaperEquipmentChange(Player viewer, Map<org.bukkit.inventory.EquipmentSlot, org.bukkit.inventory.ItemStack> changes) {
+        sendPaperEquipmentChange(viewer, viewer, changes);
+    }
+
+    private void sendPaperEquipmentChange(Player viewer, Player target,
+                                          Map<org.bukkit.inventory.EquipmentSlot, org.bukkit.inventory.ItemStack> changes) {
+        if (changes.isEmpty()) return;
+        try {
+            // Player#sendEquipmentChange(Player, Map) on newer Paper, or self Map overload.
+            try {
+                var method = Player.class.getMethod("sendEquipmentChange", Player.class, Map.class);
+                method.invoke(viewer, target, changes);
+                return;
+            } catch (NoSuchMethodException ignored) {
+            }
+            if (viewer.getUniqueId().equals(target.getUniqueId())) {
+                var method = Player.class.getMethod("sendEquipmentChange", Map.class);
+                method.invoke(viewer, changes);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void sendQuiet(Player player, com.github.retrooper.packetevents.wrapper.PacketWrapper<?> packet) {
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, packet);
+        } catch (Exception ignored) {
+            try {
+                PacketEvents.getAPI().getPlayerManager().sendPacket(player, packet);
+            } catch (Exception e) {
+                logger.log(Level.SEVERE, "Failed to send packet via PacketEvents", e);
             }
         }
     }
