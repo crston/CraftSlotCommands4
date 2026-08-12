@@ -170,6 +170,7 @@ public final class CraftSlotCommands extends JavaPlugin implements Listener, Cra
         SchedulerUtil.runAsync(this, () -> {
             reloadConfig();
 
+            com.gmail.bobason01.util.ItemBuilder.prepareReload();
             ConfigurationSection rootPages = getConfig().getConfigurationSection("menu-pages");
             if (rootPages != null) {
                 for (String pageKey : rootPages.getKeys(false)) {

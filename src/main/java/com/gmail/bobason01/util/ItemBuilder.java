@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
@@ -32,6 +33,8 @@ public final class ItemBuilder {
     private static final Logger LOGGER = Bukkit.getLogger();
     private static final ItemStack ERROR_ITEM;
     private static final Map<String, Map<String, ItemModel>> PAGE_CACHE = new ConcurrentHashMap<>();
+    /** material.ordinal << 32 | cmd — creative NBT round-trip may drop PDC. */
+    private static final Set<Long> MENU_FINGERPRINTS = ConcurrentHashMap.newKeySet();
     private static final Map<String, AttributeModifier> ZERO_MODIFIERS = new HashMap<>();
     private static final ItemFlag[] ALL_FLAGS_ARRAY = ItemFlag.values();
     private static final Attribute[] ATTRIBUTES_ARRAY = Attribute.values();
@@ -61,6 +64,11 @@ public final class ItemBuilder {
 
     private ItemBuilder() {}
 
+    public static void prepareReload() {
+        PAGE_CACHE.clear();
+        MENU_FINGERPRINTS.clear();
+    }
+
     public static void loadFromConfig(String pageState, ConfigurationSection root) {
         Map<String, ItemModel> pageMap = PAGE_CACHE.computeIfAbsent(pageState, k -> new ConcurrentHashMap<>());
         pageMap.clear();
@@ -70,7 +78,7 @@ public final class ItemBuilder {
             ConfigurationSection section = root.getConfigurationSection(key);
             if (section == null) continue;
             try {
-                pageMap.put(key, new ItemModel(
+                ItemModel model = new ItemModel(
                         section.getString("material"),
                         section.getString("name"),
                         section.getStringList("lore"),
@@ -81,11 +89,20 @@ public final class ItemBuilder {
                         section.getBoolean("strip-attributes"),
                         section.getBoolean("hide-all-flags"),
                         section.getStringList("hide-flags")
-                ));
+                );
+                pageMap.put(key, model);
+                Material mat = Material.matchMaterial(model.material());
+                if (mat != null) {
+                    MENU_FINGERPRINTS.add(fingerprint(mat, model.model()));
+                }
             } catch (Exception e) {
                 LOGGER.warning("ItemBuilder Failed to load item model " + key + " on page " + pageState);
             }
         }
+    }
+
+    private static long fingerprint(Material mat, int customModelData) {
+        return ((long) mat.ordinal() << 32) | (customModelData & 0xffffffffL);
     }
 
     public static ItemStack get(String pageState, String key) {
@@ -146,12 +163,17 @@ public final class ItemBuilder {
 
     public static boolean isMenuIcon(ItemStack item) {
         if (item == null || item.getType().isAir() || !item.hasItemMeta()) return false;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return false;
         try {
-            return item.getItemMeta().getPersistentDataContainer()
-                    .has(MENU_ICON_KEY, PersistentDataType.BYTE);
+            if (meta.getPersistentDataContainer().has(MENU_ICON_KEY, PersistentDataType.BYTE)) {
+                return true;
+            }
         } catch (Throwable ignored) {
-            return false;
         }
+        // Creative sync can drop PDC; fall back to material + CMD fingerprint.
+        int cmd = meta.hasCustomModelData() ? meta.getCustomModelData() : 0;
+        return MENU_FINGERPRINTS.contains(fingerprint(item.getType(), cmd));
     }
 
     private static void markMenuIcon(ItemStack item) {

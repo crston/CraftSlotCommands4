@@ -8,6 +8,7 @@ com\gmail\bobason01\listener\CraftSlotFakeItemListener.class
 com\gmail\bobason01\util\ItemModel.class
 com\gmail\bobason01\util\UpdateTaskPool.class
 com\gmail\bobason01\util\ItemBuilder.class
+com\gmail\bobason01\listener\CraftSlotFakeItemListener$1.class
 com\gmail\bobason01\util\MenuSlots.class
 com\gmail\bobason01\CraftSlotCommands.class
 com\gmail\bobason01\util\SchedulerUtil.class

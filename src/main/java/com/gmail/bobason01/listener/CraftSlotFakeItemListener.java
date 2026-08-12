@@ -1,7 +1,12 @@
 package com.gmail.bobason01.listener;
 
 import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.event.PacketListenerAbstract;
+import com.github.retrooper.packetevents.event.PacketListenerPriority;
+import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientCreativeInventoryAction;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetSlot;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerWindowItems;
 import com.gmail.bobason01.CraftSlotCommands;
@@ -20,6 +25,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryCreativeEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerGameModeChangeEvent;
@@ -29,6 +35,7 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.InventoryView;
+import org.bukkit.inventory.PlayerInventory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -48,6 +55,8 @@ public class CraftSlotFakeItemListener implements Listener {
     private static final org.bukkit.inventory.ItemStack AIR = new org.bukkit.inventory.ItemStack(Material.AIR);
     private static final int WINDOW_SIZE = 46;
     private static final long MIN_UPDATE_INTERVAL_MS = 50L;
+    /** Cached PE air — avoid convert on every creative wipe. */
+    private static volatile ItemStack PE_AIR;
 
     private final CraftSlotCommands plugin;
     private final Logger logger;
@@ -58,6 +67,44 @@ public class CraftSlotFakeItemListener implements Listener {
     public CraftSlotFakeItemListener(CraftSlotCommands plugin) {
         this.plugin = plugin;
         this.logger = plugin.getLogger();
+        PacketEvents.getAPI().getEventManager().registerListener(
+                new PacketListenerAbstract(PacketListenerPriority.HIGH) {
+                    @Override
+                    public void onPacketReceive(PacketReceiveEvent event) {
+                        if (event.getPacketType() != PacketType.Play.Client.CREATIVE_INVENTORY_ACTION) {
+                            return;
+                        }
+                        Object playerObj = event.getPlayer();
+                        if (!(playerObj instanceof Player player)) return;
+
+                        WrapperPlayClientCreativeInventoryAction wrapper =
+                                new WrapperPlayClientCreativeInventoryAction(event);
+                        int slot = wrapper.getSlot();
+                        ItemStack peItem = wrapper.getItemStack();
+
+                        boolean block = false;
+                        if (peItem != null && !peItem.isEmpty()) {
+                            try {
+                                org.bukkit.inventory.ItemStack bukkit =
+                                        SpigotConversionUtil.toBukkitItemStack(peItem);
+                                if (ItemBuilder.isMenuIcon(bukkit)) block = true;
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        // Menu craft slots must stay empty under creative sync.
+                        if (!block && MenuSlots.isCraftSlot(slot) && isMenuSlot(player, slot)
+                                && peItem != null && !peItem.isEmpty()) {
+                            block = true;
+                        }
+                        if (!block) return;
+
+                        event.setCancelled(true);
+                        SchedulerUtil.runForPlayer(plugin, player, () -> {
+                            if (player.isOnline()) purgeMenuLeak(player);
+                        });
+                    }
+                }
+        );
     }
 
     public void reload(FileConfiguration config) {
@@ -134,11 +181,20 @@ public class CraftSlotFakeItemListener implements Listener {
         syncCursor(player);
     }
 
+    private static ItemStack peAir() {
+        ItemStack cached = PE_AIR;
+        if (cached != null) return cached;
+        try {
+            PE_AIR = SpigotConversionUtil.fromBukkitItemStack(AIR);
+        } catch (Exception e) {
+            PE_AIR = ItemStack.EMPTY;
+        }
+        return PE_AIR;
+    }
+
     private ItemStack toPe(org.bukkit.inventory.ItemStack bukkit) {
         try {
-            if (bukkit == null || bukkit.getType().isAir()) {
-                return SpigotConversionUtil.fromBukkitItemStack(AIR);
-            }
+            if (bukkit == null || bukkit.getType().isAir()) return peAir();
             return SpigotConversionUtil.fromBukkitItemStack(bukkit);
         } catch (Exception e) {
             return ItemStack.EMPTY;
@@ -147,6 +203,56 @@ public class CraftSlotFakeItemListener implements Listener {
 
     private org.bukkit.inventory.ItemStack safeRef(org.bukkit.inventory.ItemStack item) {
         return (item != null && item.getType() != Material.AIR) ? item : AIR;
+    }
+
+    /** Wipe client craft slots so creative sync cannot materialize packet menus. */
+    private void wipeClientCraftSlots(Player player) {
+        ItemStack air = peAir();
+        var pm = PacketEvents.getAPI().getPlayerManager();
+        for (int i = MenuSlots.CRAFT_MIN; i <= MenuSlots.CRAFT_MAX; i++) {
+            try {
+                pm.sendPacket(player, new WrapperPlayServerSetSlot(0, 1, i, air));
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void clearServerCraftMatrix(Player player) {
+        InventoryView view = player.getOpenInventory();
+        if (view.getType() != InventoryType.CRAFTING) return;
+        Inventory top = view.getTopInventory();
+        if (top.getSize() != 5) return;
+        for (int i = 0; i < 5; i++) {
+            top.setItem(i, null);
+        }
+    }
+
+    /** Immediate strip — creative inventory sync is async on the client. */
+    private void purgeMenuLeak(Player player) {
+        wipeClientCraftSlots(player);
+        clearServerCraftMatrix(player);
+        stripMenuIcons(player);
+        if (ItemBuilder.isMenuIcon(player.getItemOnCursor())) {
+            player.setItemOnCursor(AIR.clone());
+        }
+    }
+
+    private void purgeMenuLeakDeferred(Player player) {
+        purgeMenuLeak(player);
+        // Creative can apply client craft slots 1–2 ticks later.
+        SchedulerUtil.runForPlayerLater(plugin, player, () -> {
+            if (!player.isOnline()) return;
+            GameMode mode = player.getGameMode();
+            if (mode != GameMode.CREATIVE && mode != GameMode.SPECTATOR) return;
+            stripMenuIcons(player);
+            wipeClientCraftSlots(player);
+        }, 1L);
+        SchedulerUtil.runForPlayerLater(plugin, player, () -> {
+            if (!player.isOnline()) return;
+            GameMode mode = player.getGameMode();
+            if (mode != GameMode.CREATIVE && mode != GameMode.SPECTATOR) return;
+            stripMenuIcons(player);
+        }, 3L);
     }
 
     private void sendMenuViewIfNeeded(Player player) {
@@ -218,7 +324,8 @@ public class CraftSlotFakeItemListener implements Listener {
     }
 
     private void stripMenuIcons(Player player) {
-        org.bukkit.inventory.ItemStack[] storage = player.getInventory().getStorageContents();
+        PlayerInventory inv = player.getInventory();
+        org.bukkit.inventory.ItemStack[] storage = inv.getStorageContents();
         if (storage != null) {
             boolean changed = false;
             for (int i = 0; i < storage.length; i++) {
@@ -227,13 +334,21 @@ public class CraftSlotFakeItemListener implements Listener {
                     changed = true;
                 }
             }
-            if (changed) player.getInventory().setStorageContents(storage);
+            if (changed) inv.setStorageContents(storage);
         }
-        if (ItemBuilder.isMenuIcon(player.getInventory().getItemInOffHand())) {
-            player.getInventory().setItemInOffHand(null);
-        }
-        if (ItemBuilder.isMenuIcon(player.getItemOnCursor())) {
-            player.setItemOnCursor(AIR.clone());
+        if (ItemBuilder.isMenuIcon(inv.getItemInOffHand())) inv.setItemInOffHand(null);
+        if (ItemBuilder.isMenuIcon(inv.getHelmet())) inv.setHelmet(null);
+        if (ItemBuilder.isMenuIcon(inv.getChestplate())) inv.setChestplate(null);
+        if (ItemBuilder.isMenuIcon(inv.getLeggings())) inv.setLeggings(null);
+        if (ItemBuilder.isMenuIcon(inv.getBoots())) inv.setBoots(null);
+        if (ItemBuilder.isMenuIcon(player.getItemOnCursor())) player.setItemOnCursor(AIR.clone());
+
+        InventoryView view = player.getOpenInventory();
+        if (view.getType() == InventoryType.CRAFTING && view.getTopInventory().getSize() == 5) {
+            Inventory top = view.getTopInventory();
+            for (int i = 0; i < 5; i++) {
+                if (ItemBuilder.isMenuIcon(top.getItem(i))) top.setItem(i, null);
+            }
         }
     }
 
@@ -338,15 +453,17 @@ public class CraftSlotFakeItemListener implements Listener {
         scheduleUpdate(player, 3L);
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onGameModeChange(PlayerGameModeChangeEvent event) {
         Player player = event.getPlayer();
         GameMode neu = event.getNewGameMode();
         if (neu == GameMode.CREATIVE || neu == GameMode.SPECTATOR) {
+            // Event fires BEFORE mode applies — wipe packet menus now so creative sync sees air.
+            purgeMenuLeak(player);
+            player.closeInventory();
             SchedulerUtil.runForPlayer(plugin, player, () -> {
                 if (!player.isOnline()) return;
-                stripMenuIcons(player);
-                player.closeInventory();
+                purgeMenuLeakDeferred(player);
             });
             return;
         }
@@ -354,6 +471,36 @@ public class CraftSlotFakeItemListener implements Listener {
             if (player.isOnline() && player.getGameMode() == neu) {
                 forceClientRefresh(player);
             }
+        });
+    }
+
+    /**
+     * Creative inventory actions write client slot contents to the server.
+     * Deny any menu-icon payload; strip leftovers immediately.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onCreativeInventory(InventoryCreativeEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+
+        org.bukkit.inventory.ItemStack cursor = event.getCursor();
+        org.bukkit.inventory.ItemStack current = event.getCurrentItem();
+        boolean menu = ItemBuilder.isMenuIcon(cursor) || ItemBuilder.isMenuIcon(current);
+        int raw = event.getRawSlot();
+        if (!menu && MenuSlots.isCraftSlot(raw) && isMenuSlot(player, raw)) {
+            // Still treat craft menu slots as forbidden even if marker was stripped by NBT round-trip.
+            menu = true;
+        }
+        if (!menu) return;
+
+        event.setCancelled(true);
+        try {
+            event.setResult(org.bukkit.event.Event.Result.DENY);
+        } catch (Throwable ignored) {
+        }
+        event.setCursor(AIR.clone());
+        SchedulerUtil.runForPlayer(plugin, player, () -> {
+            if (!player.isOnline()) return;
+            purgeMenuLeak(player);
         });
     }
 }
